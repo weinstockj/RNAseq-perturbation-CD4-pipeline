@@ -5,22 +5,32 @@ import pandas as pd
 
 sample_sheet = pd.read_table('/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/metadata/sample_meta_data_2022_09_01.tsv', index_col = False)
 rna_samples = sample_sheet.Sample.tolist()
+print(f"rna samples = {rna_samples}")
 
 fastq_dir = "/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/fastq"
 output_base_dir = "/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/rnaseq_pipeline/output"
+GTF = "/oak/stanford/groups/pritch/users/jweinstk/resources/gencode/gencode.v41.basic.annotation.gtf"
+BIN_DIR = "/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/rnaseq_pipeline/scripts/bin"
+SEQTK = os.path.join(BIN_DIR, "seqtk-1.3", "seqtk")
+STAR_INDEX = "/oak/stanford/groups/pritch/users/jake/genome/human/star_human"
+CONDA_BASE = "/oak/stanford/groups/pritch/users/jweinstk/miniconda3/etc/profile.d/conda.sh"
 
-def create_directory_if_not_exist(dir)
+def create_directory_if_not_exist(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
 
     
 dirs = [
     output_base_dir,
+    "benchmarks",
     os.path.join(output_base_dir, "qc"),
     os.path.join(output_base_dir, "qc", "rseqc"),
     os.path.join(output_base_dir, "qc", "fastqc"),
     os.path.join(output_base_dir, "qc", "preseq"),
     os.path.join(output_base_dir, "qc", "read_stats"),
+    os.path.join(output_base_dir, "fastq", "trimmed"),
+    os.path.join(output_base_dir, "fastq", "umi"),
+    os.path.join(output_base_dir, "seqtk"),
     os.path.join(output_base_dir, "bam", "dedup"),
     os.path.join(output_base_dir, "bam", "star"),
     os.path.join(output_base_dir, "counts"),
@@ -33,7 +43,9 @@ rule all:
     input:
         "output/multiqc_report.html",
         "output/counts/dedup_counts.txt",
-        "output/counts/all_counts.txt"
+        "output/counts/all_counts.txt",
+        expand("output/bam/dedup/{sample_label}.dedup.bam", sample_label = rna_samples),
+        expand("output/qc/fastqc/{sample_label}_umi_trimmed_fastqc.html", sample_label = rna_samples)
 
 rule multiqc:
     input:
@@ -63,13 +75,17 @@ rule multiqc:
     conda:
         "envs/rna_seq.yaml"
     shell:
-        "multiqc -f output/ error_files/ logs/ --ignore output/biotype/ -o output/"
+        """
+        set +u 
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u
+        multiqc -f output/ error_files/ logs/ --ignore output/biotype/ -o output/
+        """
 
 # UMI-tools to extract UMI and add it to read header
 # Also remove linker sequence
 rule umiheader:
     input:
-        # fastq = lambda wildcards: glob.glob('original_fastq/*/' + sample_sheet.loc[sample_sheet.Sample == wildcards.sample_label]["Davis_ID"].values[0] + '_UMI*.fastq.gz')
         fastq = lambda wildcards: sample_sheet.loc[sample_sheet.Sample == wildcards.sample_label]["path"].values[0]
     output:
         fastq = "output/fastq/umi/{sample_label}_umi.fastq.gz",
@@ -85,8 +101,12 @@ rule umiheader:
     benchmark: 
         "benchmarks/umi_tools/{sample_label}_header.txt"
     shell:
-        "zcat {input.fastq} | umi_tools extract -S {output.fastq} --log={output.log} "
-        "--extract-method=regex --bc-pattern='(?P<umi_1>.{{6}})(?P<discard_1>.{{4}}).*'"
+        """
+        set +u 
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u 
+        zcat {input.fastq} | umi_tools extract -S {output.fastq} --log={output.log} --extract-method=regex --bc-pattern='(?P<umi_1>.{{6}})(?P<discard_1>.{{4}}).*'
+        """
 
 # cutadapt
 rule cutadapt:
@@ -106,14 +126,42 @@ rule cutadapt:
         "envs/rna_seq.yaml"
     shell:
         """
+        set +u 
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u 
         cutadapt -a "A{{30}}" -a "T{{30}}" -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
         --minimum-length 20 -o {output.fastq} {input.fastq}
+
         """
+
+rule seqtk:
+    input:
+        fastq = "output/fastq/trimmed/{sample_label}_umi_trimmed.fastq.gz"
+    output:
+        fastq = "output/seqtk/{sample_label}_umi_trimmed_trimfq.fastq.gz",
+        untrimmed_fqchk = "output/seqtk/{sample_label}_untrimmed.txt",
+        trimmed_fqchk = "output/seqtk/{sample_label}_trimmed.txt"
+    params:
+        error_out_file = "error_files/{sample_label}_seqtk",
+        run_time="2:00:00",
+        cores="1",
+        memory="4000",
+        job_name="seqtk"
+    benchmark:
+        "benchmarks/seqtk/{sample_label}.txt"
+    shell:
+        """
+        {SEQTK} trimfq -q 0.05 -Q {input.fastq} | gzip -c > {output.fastq}
+        {SEQTK} fqchk {input.fastq} > {output.untrimmed_fqchk}
+        {SEQTK} fqchk {output.fastq} > {output.trimmed_fqchk}
+        """
+
 
 # map
 rule star:
     input:
-        "output/fastq/trimmed/{sample_label}_umi_trimmed.fastq.gz"
+        # "output/fastq/trimmed/{sample_label}_umi_trimmed.fastq.gz"
+        "output/seqtk/{sample_label}_umi_trimmed_trimfq.fastq.gz",
     output:
         bam = "output/bam/star/{sample_label}.unique.Aligned.sortedByCoord.out.bam",
         idx = "output/bam/star/{sample_label}.unique.Aligned.sortedByCoord.out.bam.bai"
@@ -129,11 +177,15 @@ rule star:
     conda:
         "envs/rna_seq.yaml"
     shell:
-        "STAR --genomeDir /oak/stanford/groups/pritch/users/jake/genome/human/star_human "
-        "--readFilesIn {input} "
-        "--readFilesCommand zcat --outSAMtype BAM SortedByCoordinate "
-        "--outFilterMultimapNmax 1 --outFileNamePrefix {params.prefix}; "
-        "samtools index {output}"
+        """
+        set +u 
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u 
+
+        STAR --genomeDir {STAR_INDEX} --readFilesIn {input} --readFilesCommand zcat --outSAMtype BAM SortedByCoordinate --quantMode GeneCounts --outFilterMultimapNmax 10 --outFileNamePrefix {params.prefix}
+
+        samtools index {output.bam}
+        """
 
 # deduplicate based on UMIs
 rule deduplicate:
@@ -155,8 +207,14 @@ rule deduplicate:
     benchmark: 
         "benchmarks/umi_tools/{sample_label}_dedup.txt"
     shell:
-        "umi_tools dedup -I {input} --output-stats={params.prefix} -S {output.bam}; "
-        "samtools index {output.bam}"
+        """
+        set +u
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u
+
+        umi_tools dedup -I {input} --output-stats={params.prefix} -S {output.bam} 
+        samtools index {output.bam}
+        """
 
 # featurecounts
 rule featureCounts:
@@ -177,10 +235,14 @@ rule featureCounts:
     conda:
         "envs/rna_seq.yaml"
     shell:
-        "featureCounts -s 1 -a /oak/stanford/groups/pritch/users/jake/genome/human/gencode.v35.basic.annotation.gtf "
-        "-o output/counts/dedup_counts.txt {input.dedup_bams}; "
-        "featureCounts -s 1 -a /oak/stanford/groups/pritch/users/jake/genome/human/gencode.v35.basic.annotation.gtf "
-        "-o output/counts/all_counts.txt {input.all_bams}; "
+        """
+        set +u 
+        source {CONDA_BASE} && conda activate rna_seq
+        set -u 
+
+        featureCounts -s 1 -a {GTF} -o output/counts/dedup_counts.txt {input.dedup_bams}
+        featureCounts -s 1 -a {GTF} -o output/counts/all_counts.txt {input.all_bams} 
+        """
 
 # biotype
 rule biotype:
@@ -200,7 +262,8 @@ rule biotype:
     conda:
         "envs/rna_seq.yaml"
     shell:
-        "featureCounts -s 1 -a /oak/stanford/groups/pritch/users/jake/genome/human/gencode.v35.basic.annotation.gtf "
+        "set +u; source {CONDA_BASE} && conda activate rna_seq; set -u; "
+        "featureCounts -s 1 -a {GTF} "
         "-g gene_type -o {output.biotype_intermediate} {input}; "
         """echo "# section_name: 'featureCounts Biotype'" > {output.biotype_final}; """
         "cut -f 1,7 {output.biotype_intermediate} | tail -n +3 >> {output.biotype_final}"
@@ -226,6 +289,7 @@ rule fastqc:
     benchmark: 
         "benchmarks/fastqc/{sample_label}.txt"
     shell:
+        "set +u; source {CONDA_BASE} && conda activate rna_seq; set -u; "
         "fastqc {input} --outdir=output/qc/fastqc/"
 
 # Use Preseq to estimate library complexity
@@ -244,6 +308,7 @@ rule estimate_library_complexity:
         "envs/rna_seq.yaml"
     benchmark: "benchmarks/preseq/{sample_label}.txt"
     shell:
+        "set +u; source {CONDA_BASE} && conda activate rna_seq; set -u; "
         "preseq lc_extrap -P -o {output.lc} -B {input.bam}" 
 
 # Calculate how many reads were deduplicated
@@ -266,6 +331,9 @@ rule dedup_stats:
         "envs/rna_seq.yaml"
     shell:
         """
+        set +u
+        source {CONDA_BASE} && conda activate rna_seq 
+        set -u
         echo "# parent_id: custom_section" > {output.deduplicated};
         echo "# parent_name: 'Deduplication stats'" >> {output.deduplicated};
         echo "# parent_description: 'Percent of reads remaning after deduplication based on UMI'" >> {output.deduplicated};
@@ -308,6 +376,7 @@ rule rseqc:
     conda:
         "envs/rna_seq.yaml"
     shell:
+        "set +u; source {CONDA_BASE} && conda activate rna_seq; set -u; "
         "geneBody_coverage.py -r /oak/stanford/groups/pritch/users/jake/genome/rseqc/hg38_Gencode_V28.bed "
         " -i {input.bam} -o {params.prefix}; "
         "read_distribution.py -i {input} -r /oak/stanford/groups/pritch/users/jake/genome/rseqc/hg38_Gencode_V28.bed > {output.distribution}; "
