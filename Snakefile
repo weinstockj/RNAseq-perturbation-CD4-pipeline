@@ -3,7 +3,7 @@
 import os, sys, glob
 import pandas as pd
 
-sample_sheet = pd.read_table('/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/metadata/sample_meta_data_2022_09_01.tsv', index_col = False)
+sample_sheet = pd.read_table('/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/metadata/sample_meta_data_2022_12_08.tsv', index_col = False)
 rna_samples = sample_sheet.Sample.tolist()
 print(f"rna samples = {rna_samples}")
 
