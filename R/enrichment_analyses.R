@@ -2,6 +2,10 @@ constraint_metrics_location = function() {
     "/oak/stanford/groups/pritch/users/jweinstk/resources/constraint_metrics/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz"    
 }
 
+tj_constraint_metrics_location = function() {
+    "/oak/stanford/groups/pritch/users/jweinstk/resources/constraint_metrics/features.112922.tuned_081822.ipsita_demo_med_cov_200_low_map_false_lof_flag_true_mean_prop_005.125.3.8.1.2.1.4.eb_misannot.1e-8.tsv"
+}
+
 pics_ai_location = function() {
     "/home/users/jweinstk/network_inference/data/single_cell/human_cell_atlas/gene_annotations/AIgenes.txt"
 }
@@ -69,52 +73,63 @@ read_eqtlgen_trans_eqtls = function() {
     return(df)
 }
 
+read_schmidt_cytokine_hits = function(path = "/oak/stanford/groups/pritch/users/jweinstk/resources/schmidt_cytokine_hits/schmidt_table_s2_cytokine_hits.csv") {
+    vroom::vroom(path, col_select = c(
+        Gene, 
+        Screen_Version,
+        CRISPRa_or_i,
+        CD4_or_CD8,
+        Cytokine,
+        Hit_Type,
+        zscore, # positive regulators have a positive zscore
+        LFC,
+        FDR
+    )) %>%
+    dplyr::filter(CD4_or_CD8 == "CD4") %>%
+    dplyr::rename(
+        gene_name = Gene
+    ) 
+}
 
-read_dice = function() {
+read_dice = function(path ="/oak/stanford/groups/pritch/users/jweinstk/resources/DICE/DICE_2018_S2_cell_type_specificity.csv") {
 
     logger::log_info("now reading in DICE immune reference")
 
-    files = list.files(
-        "/oak/stanford/groups/pritch/users/jweinstk/resources/DICE",
-        full.names = TRUE,
-        pattern = ".parquet$"
-    )
-
-    df = purrr::map_dfr(files, ~{
-
-
-            base = basename(.x)
-            cell_type = stringr::str_remove(base, ".parquet")
-            cell_type = stringr::str_remove(cell_type, "cell_type=")
-
-            logger::log_info(glue::glue("now working on cell type = {cell_type}"))
-
-            # arrow::read_parquet(.x, as_data_frame = FALSE) %>%
-            arrow::read_parquet(.x, as_data_frame = TRUE) %>%
-                # arrow::to_duckdb() %>%
-                tidyr::pivot_longer(
-                    names_to = "sample",
-                    values_to = "expression",
-                    cols = !(Feature_name:Additional_annotations)
-                ) %>%
-                dplyr::group_by(gene_id = Feature_name) %>%
-                dplyr::summarize(
-                    median = median(expression)    
-                ) %>%
-                dplyr::collect(.) %>%
-                dplyr::mutate(
-                    cell_type = .env[["cell_type"]]
-                ) 
-                # dplyr::rowwise(.) %>%
-                # dplyr::mutate(
-                #     median = median(dplyr::c_across(!(Feature_name:Additional_annotations)))
-                # )
-        })
+    df = vroom::vroom(path) %>%
+            dplyr::rename(
+                cell_type = `Cell type`,
+                gene_id = `Ensembl ID`,
+                gene_name = `Gene ID`
+            ) %>%
+            remove_ensembl_verison
 
     logger::log_info("done")
 
     return(df)
 }
+
+pull_cell_type_specific_genes = function(dice, cell_type) {
+
+    valid_types = c(
+        "Memory TREG cells",
+        "Naïve CD4+ T cells",
+        "Naïve TREG cells",
+        "TFH cells",
+        "TH1 cells",
+        "TH1/17 cells",
+        "TH17 cells",
+        "TH2 cells"
+    )
+
+    stopifnot(is.data.frame(dice) && "cell_type" %in% names(dice))
+
+    cell_type = match.arg(cell_type, valid_types)
+
+    dice %>%
+        dplyr::filter(cell_type == .env[["cell_type"]]) %>%
+        dplyr::pull(gene_name)
+}
+
 
 remove_ensembl_verison = function(df) {
     df %>%
@@ -123,64 +138,6 @@ remove_ensembl_verison = function(df) {
         )
 }
 
-dice_max_cell_type = function(dice) {
-
-    exclude = c("CD4_NAIVE", "MONOCYTES")
-
-    dice %>%
-        dplyr::filter(!(cell_type %in% exclude)) %>%
-        dplyr::group_by(gene_id) %>%
-        dplyr::summarize(
-            max_cell_type = cell_type[which.max(median)]
-        ) %>%
-        dplyr::ungroup(.) %>%
-        remove_ensembl_verison
-}
-
-identify_tcell_specific_genes = function(blood_specific_genes, dice) {
-
-    df = dice %>%
-        remove_ensembl_verison %>%
-        dplyr::filter(gene_id %in% blood_specific_genes) %>%
-        dplyr::add_count(gene_id) %>%
-        dplyr::filter(n == 11) %>% # remove genes with more than 11 rows since there are duplicates
-        dplyr::select(-n) %>%
-        tidyr::pivot_wider(names_from = cell_type, values_from = median) %>%
-        tidyr::pivot_longer(
-            # cols = c(B_CELL_NAIVE, MONOCYTES, NK),
-            cols = c(MONOCYTES),
-            names_to = "cell_type",
-            values_to = "non_th_expression"
-        )
-
-    df %>%
-        dplyr::group_by(gene_id) %>%
-        dplyr::summarize(
-            max_non_th_expression = max(non_th_expression, na.rm = TRUE),
-            `THSTAR` = `THSTAR`[1],
-            `TH1` = `TH1`[1],
-            `TH2` = `TH2`[1],
-            `TH17` = `TH17`[1],
-            `TREG_NAIVE` = `TREG_NAIVE`[1],
-            `CD4_STIM` = `CD4_STIM`[1],
-            `CD4_NAIVE` = `CD4_NAIVE`[1],
-            THSTAR_non_th_ratio = THSTAR / max_non_th_expression,
-            TH17_non_th_ratio = TH17 / max_non_th_expression,
-            TH1_non_th_ratio = TH1 / max_non_th_expression,
-            TH2_non_th_ratio = TH2 / max_non_th_expression,
-            TREG_NAIVE_non_th_ratio = TREG_NAIVE / max_non_th_expression,
-            CD4_NAIVE_non_th_ratio = CD4_NAIVE / max_non_th_expression,
-            CD4_STIM_non_th_ratio = CD4_STIM / max_non_th_expression,
-            TH17_THSTAR_ratio = TH17 / THSTAR,
-            TH1_THSTAR_ratio = TH1 / THSTAR,
-            TH2_THSTAR_ratio = TH2 / THSTAR,
-            TREG_NAIVE_THSTAR_ratio = TREG_NAIVE / THSTAR,
-            CD4_STIM_THSTAR_ratio = CD4_STIM / THSTAR,
-            CD4_NAIVE_THSTAR_ratio = CD4_NAIVE / THSTAR
-        ) %>%
-        dplyr::ungroup(.) %>%
-        dplyr::distinct(.)
-}
 
 identify_blood_specific_genes = function() {
 
@@ -449,7 +406,8 @@ extract_expression_by_gene = function(results, txdb) {
 }
 
 forest_plot_causal_centrality = function(
-    centrality, expression, meta, constraint, iei_genes, gwas_genes, trans_egenes) {
+    centrality, expression, meta, constraint, iei_genes, gwas_genes, trans_egenes, 
+    constraint_measure = 'pLI', tag = "pLI") {
 
     centrality = centrality %>%
         dplyr::rename(gene_name = name) %>%
@@ -469,19 +427,31 @@ forest_plot_causal_centrality = function(
 
     models = list(
         "Out-degree" = MASS::glm.nb(
-            `out_degree` ~ pLI + gene_group + expression,
+            as.formula(
+                glue::glue(
+                    "`out_degree` ~ {constraint_measure} + gene_group + expression"
+                )
+            ),
             data = centrality,
             maxit = 1e4
         ),
 
         "In-degree" = MASS::glm.nb(
-            `in_degree` ~ pLI + gene_group + expression,
+            as.formula(
+                glue::glue(
+                    "`in_degree` ~ {constraint_measure} + gene_group + expression"
+                )
+            ),
             data = centrality,
             maxit = 1e4
         ),
 
         "Degree" = MASS::glm.nb(
-            `degree` ~ pLI + gene_group + expression,
+            as.formula(
+                glue::glue(
+                    "`degree` ~ {constraint_measure} + gene_group + expression"
+                )
+            ),
             data = centrality,
             maxit = 1e4
         )
@@ -495,19 +465,19 @@ forest_plot_causal_centrality = function(
 
     models_no_group = list(
         "Out-degree" = MASS::glm.nb(
-            `out_degree` ~ pLI,
+            as.formula(glue::glue("`out_degree` ~ {constraint_measure}")),
             data = centrality %>% dplyr::mutate(pLI = pLI * 10),
             maxit = 1e4
         ),
 
         "In-degree" = MASS::glm.nb(
-            `in_degree` ~ pLI,
+            as.formula(glue::glue("`in_degree` ~ {constraint_measure}")),
             data = centrality %>% dplyr::mutate(pLI = pLI * 10),
             maxit = 1e4
         ),
 
         "Degree" = MASS::glm.nb(
-            `degree` ~ pLI,
+            as.formula(glue::glue("`degree` ~ {constraint_measure}")),
             data = centrality %>% dplyr::mutate(pLI = pLI * 10),
             maxit = 1e4
         )
@@ -543,6 +513,7 @@ forest_plot_causal_centrality = function(
                 term_label = case_when(
                    term == "is_trans_egene" ~ "Is an eQTLgen trans-eGene", 
                    term == "pLI" ~ "Constraint (pLI)",
+                   term == "tj_constraint" ~ "Constraint (Zeng-Spence)",
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
                 ),
@@ -570,7 +541,7 @@ forest_plot_causal_centrality = function(
             axis.title.y = element_blank()
         )
 
-    fname = file.path(figure_dir(), "causal_network_forest.pdf")
+    fname = file.path(figure_dir(), glue::glue("causal_network_forest_{tag}.pdf"))
     
     ggsave(fname, plot, width = 6, height = 4, units = "in")
 
@@ -611,7 +582,7 @@ forest_plot_causal_centrality = function(
             axis.title.y = element_blank()
         )
 
-    fname = file.path(figure_dir(), "causal_network_forest_no_group_covariate.pdf")
+    fname = file.path(figure_dir(), glue::glue("causal_network_forest_no_group_covariate_{tag}.pdf"))
     
     ggsave(fname, plot, width = 6, height = 3, units = "in")
         
@@ -631,8 +602,8 @@ forest_plot_downstream_indegree = function(
     gwas_genes,
     trans_egenes,
     blood_specific_genes,
-    tcell_specific_genes,
-    tag = "diffeq") {
+    constraint_measure = "pLI",
+    tag = "diffeq_pLI") {
 
 
     downstream_indegree_wide = downstream_indegree_by_group %>%
@@ -648,34 +619,44 @@ forest_plot_downstream_indegree = function(
             is_iei = gene_name %in% iei_genes,
             is_gwas = gene_name %in% gwas_genes,
             is_trans_egene = gene_name %in% trans_egenes,
-            is_blood_specific = gene_name %in% blood_specific_genes,
-            is_tcell_specific = gene_name %in% tcell_specific_genes
+            is_blood_specific = gene_name %in% blood_specific_genes
         )
 
     models = list(
         "IEI Targets" = MASS::glm.nb(
-            `IEI Target` ~ pLI + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression,
+            as.formula(glue::glue(
+
+            "`IEI Target` ~ {constraint_measure} + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression"
+            )),
             # `IEI Target` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "IL2RA Regulators" = MASS::glm.nb(
-            `IL2RA Regulators` ~ pLI + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression,
+            as.formula(glue::glue(
+
+            "`IL2RA Regulators` ~ {constraint_measure} + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression"
+            )),
             # `IL2RA Regulators` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "IEI + IL2RA" = MASS::glm.nb(
-            `non_control` ~ pLI + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression,
+            as.formula(glue::glue(
+
+            "`non_control` ~ {constraint_measure} + is_iei + is_gwas + Control + is_trans_egene + is_blood_specific + expression"
+            )),
             # `non_control` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "Control" = MASS::glm.nb(
-            `Control` ~ pLI + is_iei + is_gwas + is_trans_egene + is_blood_specific + expression,
+            as.formula(glue::glue(
+                "`Control` ~ {constraint_measure} + is_iei + is_gwas + is_trans_egene + is_blood_specific + expression"
+            )),
             # `Control` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
@@ -701,6 +682,7 @@ forest_plot_downstream_indegree = function(
                    term == "is_tcell_specific" ~ "Is a T-cell specific gene", 
                    term == "is_blood_specific" ~ "Is a whole blood specific gene", 
                    term == "pLI" ~ "Constraint (pLI)",
+                   term == "tj_constraint" ~ "Constraint (Zeng-Spence)",
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
                 ),
@@ -738,13 +720,12 @@ forest_plot_downstream_indegree_cell_type_specific = function(
     downstream_indegree_by_group,
     expression, 
     meta,
-    CD4_naive_genes,
-    CD4_stimulated_genes,
     TH1_genes,
     TH2_genes,
     TH17_genes,
-    THSTAR_genes,
-
+    naive_TREG_genes,
+    naive_CD4_genes,
+    memory_TREG_genes,
     tag = "diffeq") {
 
 
@@ -760,33 +741,35 @@ forest_plot_downstream_indegree_cell_type_specific = function(
             is_TH1_specific = gene_name %in% TH1_genes,
             is_TH2_specific = gene_name %in% TH2_genes,
             is_TH17_specific = gene_name %in% TH17_genes,
-            is_CD4_STIM_specific = gene_name %in% CD4_stimulated_genes
+            is_naive_CD4_specific = gene_name %in% naive_CD4_genes,
+            is_naive_TREG_specific = gene_name %in% naive_TREG_genes,
+            is_memory_TREG_specific = gene_name %in% memory_TREG_genes
         )
 
     models = list(
         "IEI Targets" = MASS::glm.nb(
-            `IEI Target` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_CD4_STIM_specific + Control  + expression,
+            `IEI Target` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_naive_TREG_specific + is_naive_CD4_specific + is_memory_TREG_specific + Control  + expression,
             # `IEI Target` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "IL2RA Regulators" = MASS::glm.nb(
-            `IL2RA Regulators` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_CD4_STIM_specific + Control  + expression,
+            `IL2RA Regulators` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_naive_TREG_specific + is_naive_CD4_specific + is_memory_TREG_specific + Control  + expression,
             # `IL2RA Regulators` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "IEI + IL2RA" = MASS::glm.nb(
-            `non_control` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_CD4_STIM_specific + Control  + expression,
+            `non_control` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_naive_TREG_specific + is_naive_CD4_specific + is_memory_TREG_specific + Control  + expression,
             # `non_control` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
         ),
 
         "Control" = MASS::glm.nb(
-            `Control` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_CD4_STIM_specific + expression,
+            `Control` ~ is_TH1_specific + is_TH2_specific + is_TH17_specific + is_naive_TREG_specific + is_naive_CD4_specific + is_memory_TREG_specific + expression,
             # `Control` ~ is_iei + expression,
             data = downstream_indegree_wide,
             maxit = 1e3
@@ -806,9 +789,12 @@ forest_plot_downstream_indegree_cell_type_specific = function(
                 term = str_remove_all(term, "TRUE"),
                 term_label = case_when(
                    term == "Control" ~ "Incoming connections from control TFs", 
-                   term == "is_TH1_specific" ~ "Enriched for Th1 specificity", 
-                   term == "is_TH2_specific" ~ "Enriched for Th2 specificity", 
-                   term == "is_TH17_specific" ~ "Enriched for Th17 specificity", 
+                   term == "is_TH1_specific" ~ "Th1 specific", 
+                   term == "is_TH2_specific" ~ "Th2 specific", 
+                   term == "is_TH17_specific" ~ "Th17 specific", 
+                   term == "is_naive_TREG_specific" ~ "Naive Treg specific", 
+                   term == "is_naive_CD4_specific" ~ "Naive CD4+ specific", 
+                   term == "is_memory_TREG_specific" ~ "Memory Treg specific", 
                    term == "is_CD4_STIM_specific" ~ "Enriched for genes responsive to stimulation", 
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
