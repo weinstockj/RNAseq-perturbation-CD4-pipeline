@@ -3,11 +3,16 @@ proliferation_location = function() {
 }
 
 read_proliferation = function() {
-    vroom::vroom(proliferation_location(), col_select = c("gene_symbol", "padj", "log2FoldChange")) %>%
+    vroom::vroom(proliferation_location(), col_select = c("gene_symbol", "stat", "padj", "log2FoldChange")) %>%
         dplyr::mutate(
             proliferation = padj < 5e-2
         ) %>%
-        dplyr::select(gene_name = gene_symbol, proliferation, proliferation_log2FC = log2FoldChange)
+        dplyr::select(
+            gene_name = gene_symbol,
+            proliferation,
+            proliferation_log2FC = log2FoldChange,
+            zscore = stat
+        )
 }
 
 plot_proliferation = function(meta, proliferation) {
@@ -130,3 +135,72 @@ plot_proliferation_ko_specific = function(ko_specific_effects, proliferation, me
     ggsave(fnames["distribution_normalized"], plot, width = 8, height = 6, units = "in")
 }
 
+
+plot_cytokine_proliferation_effect = function(proliferation, cytokine_hits, mashr, meta, lfsr_threshold = set_lfsr_threshold()) {
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "beta", -to) 
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm) %>%
+        dplyr::inner_join(
+            meta %>% 
+                add_gene_group_colors %>%
+                dplyr::distinct(KO, gene_group, color), 
+            by = c("from" = "KO")
+        )
+
+    print(lfsr)
+
+    edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::inner_join(
+            proliferation %>%
+                dplyr::select(
+                    gene_name, 
+                    proliferation_zscore = zscore
+                ),
+            by = c("to" = "gene_name")
+        ) %>%
+        dplyr::inner_join(
+            cytokine_hits %>%
+                dplyr::filter(Cytokine == "IFNG") %>%
+                dplyr::select(
+                    gene_name,
+                    IFNg_zscore = zscore
+                ),
+            by = c("to" = "gene_name")
+        )
+
+    summarized_edges = edges %>%
+        dplyr::group_by(from, gene_group, color) %>%
+        dplyr::summarize(
+            proliferation = sum(proliferation_zscore * sign(beta), na.rm = T),
+            IFNg = sum(IFNg_zscore * sign(beta), na.rm = T),
+        )
+
+    plot = ggplot(summarized_edges, aes(x = proliferation, y = IFNg, color = gene_group, label = from)) +
+        geom_point() +
+        add_gene_group_color_ggplot2() +
+        ggrepel::geom_label_repel() +
+        cowplot::theme_cowplot(font_size = 11) +
+        labs(
+            x = "Aggregate downstream effect on proliferation",
+            y = "Aggregate downstream effect on IFNg secretion"
+        )
+
+    ggsave(
+        file.path(figure_dir(), "joint_downstream_proliferation_IFNg_scatter.pdf"),
+        plot,
+        width = 7,
+        height = 5,
+        units = "in"
+    )
+
+    return(edges)
+}
