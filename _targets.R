@@ -47,6 +47,7 @@ source("R/joint_downstream_model.R")
 source("R/validate_network.R")
 source("R/ABC_enrichment.R")
 source("R/pathway_plot.R")
+source("R/annotate_GWAS_loci.R")
 
 # Replace the target list below with your own:
 list(
@@ -252,8 +253,16 @@ list(
     ),
     tar_target(
         name = constraint,
-        command = vroom::vroom(constraint_metrics_location(), col_select = c(gene, pLI)) %>%
-            dplyr::rename(gene_name = gene)
+        command = vroom::vroom(constraint_metrics_location(), col_select = c(gene, gene_id, pLI)) %>%
+            dplyr::rename(gene_name = gene) %>%
+            dplyr::left_join(
+                vroom::vroom(tj_constraint_metrics_location()) %>%
+                    dplyr::select(
+                        gene_id = ensg,
+                        tj_constraint = post_mean
+                    )
+            ) %>%
+            dplyr::select(-gene_id)
     ),
     tar_target(
         name = proliferation,
@@ -262,6 +271,14 @@ list(
     tar_target(
         name = plot_proliferation_scatter_,
         command = plot_proliferation(meta, proliferation)
+    ),
+    tar_target(
+        name = cytokine_hits,
+        command = read_schmidt_cytokine_hits()
+    ),
+    tar_target(
+        name = joint_downstream_IFNg_proliferation,
+        command = plot_cytokine_proliferation_effect(proliferation, cytokine_hits, joint_downstream_model, meta)
     ),
     tar_target(
         name = enrichment_,
@@ -445,7 +462,7 @@ list(
         command = read_yazar_trans_eqtls()
     ),
     tar_target(
-        name = read_dice_,
+        name = tcell_subtype_specific_genes,
         command = read_dice(),
         format = "feather"
     ),
@@ -453,65 +470,6 @@ list(
         name = blood_specific_genes,
         command = identify_blood_specific_genes()
     ),
-    tar_target(
-        name = tcell_specific_data,
-        command = identify_tcell_specific_genes(blood_specific_genes, read_dice_),
-        format = "feather"
-    ),
-    tar_target(
-        name = tcell_specific_genes,
-        command = tcell_specific_data %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = THSTAR_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(THSTAR_non_th_ratio > 1.3) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = CD4_STIM_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(CD4_STIM_THSTAR_ratio > 1.3) %>%
-            # dplyr::filter(CD4_STIM_non_th_ratio > 1.2) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = CD4_NAIVE_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(CD4_NAIVE_THSTAR_ratio > 1.3) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = TH1_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(TH1_THSTAR_ratio > 1.3) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = TH2_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(TH2_THSTAR_ratio > 1.3) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    tar_target(
-        name = TH17_enriched_genes,
-        command = tcell_specific_data %>%
-            dplyr::filter(TH17_THSTAR_ratio > 1.3) %>%
-            dplyr::pull(gene_id) %>%
-            convert_ensembl_to_symbol(remove_ensembl_version_txdb(txdb))
-    ),
-    # tar_target(
-    #     name = annotate_t_cell_expression,
-    #     command = dice_max_cell_type(read_dice_, blood_specific_genes),
-    #     format = "feather"
-    # ),
     tar_target(
         name = read_eqtlgen_,
         command = read_eqtlgen_trans_eqtls()
@@ -521,7 +479,7 @@ list(
         command = extract_expression_by_gene(results_with_pcs, txdb),
     ),
     tar_target(
-        name = forest_plot_downstream_indegree_,
+        name = forest_plot_downstream_indegree_pLI_,
         command = forest_plot_downstream_indegree(
             downstream_indegree_by_group,
             expression,
@@ -531,12 +489,27 @@ list(
             gwas_genes = pics_ai_genes(),
             trans_egenes = unique(read_eqtlgen_)$gene_name,
             blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
-            tcell_specific_genes = tcell_specific_genes,
-            tag = "diffeq_lfsr"
+            constraint_measure = "pLI",
+            tag = "diffeq_lfsr_pLI"
         )
     ),
     tar_target(
-        name = forest_plot_downstream_indegree_joint_downstream_,
+        name = forest_plot_downstream_indegree_TJ_,
+        command = forest_plot_downstream_indegree(
+            downstream_indegree_by_group,
+            expression,
+            meta,
+            constraint,
+            iei_genes = iei_genes(),
+            gwas_genes = pics_ai_genes(),
+            trans_egenes = unique(read_eqtlgen_)$gene_name,
+            blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
+            constraint_measure = "tj_constraint",
+            tag = "diffeq_lfsr_TJ"
+        )
+    ),
+    tar_target(
+        name = forest_plot_downstream_indegree_joint_downstream_pLI_,
         command = forest_plot_downstream_indegree(
             downstream_indegree_by_group_joint_downstream,
             expression,
@@ -546,8 +519,23 @@ list(
             gwas_genes = pics_ai_genes(),
             trans_egenes = unique(read_eqtlgen_)$gene_name,
             blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
-            tcell_specific_genes = tcell_specific_genes,
-            tag = "joint_downstream_lfsr"
+            constraint_measure = "pLI",
+            tag = "joint_downstream_lfsr_pLI"
+        )
+    ),
+    tar_target(
+        name = forest_plot_downstream_indegree_joint_downstream_TJ_,
+        command = forest_plot_downstream_indegree(
+            downstream_indegree_by_group_joint_downstream,
+            expression,
+            meta,
+            constraint,
+            iei_genes = iei_genes(),
+            gwas_genes = pics_ai_genes(),
+            trans_egenes = unique(read_eqtlgen_)$gene_name,
+            blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
+            constraint_measure = "tj_constraint",
+            tag = "joint_downstream_lfsr_TJ"
         )
     ),
     tar_target(
@@ -556,16 +544,17 @@ list(
             downstream_indegree_by_group_joint_downstream,
             expression,
             meta,
-            TH1_genes = TH1_enriched_genes,
-            TH2_genes = TH2_enriched_genes,
-            TH17_genes = TH17_enriched_genes,
-            CD4_stimulated_genes = CD4_STIM_enriched_genes,
-            CD4_naive_genes = CD4_NAIVE_enriched_genes,
+            TH1_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "TH1 cells"),
+            TH2_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "TH2 cells"),
+            TH17_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "TH17 cells"),
+            naive_TREG_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "Naïve TREG cells"),
+            naive_CD4_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "Naïve CD4+ T cells"),
+            memory_TREG_genes = pull_cell_type_specific_genes(tcell_subtype_specific_genes, "Memory TREG cells"),
             tag = "joint_downstream_lfsr"
         )
     ),
     tar_target(
-        name = forest_plot_causal_centrality_,
+        name = forest_plot_causal_centrality_pLI_,
         command = forest_plot_causal_centrality(
             compute_centrality_,
             expression,
@@ -573,7 +562,23 @@ list(
             constraint,
             iei_genes = iei_genes(),
             gwas_genes = pics_ai_genes(),
-            trans_egenes = unique(read_eqtlgen_)$gene_name
+            trans_egenes = unique(read_eqtlgen_)$gene_name,
+            constraint_measure = "pLI",
+            tag = "pLI"
+        )
+    ),
+    tar_target(
+        name = forest_plot_causal_centrality_TJ_,
+        command = forest_plot_causal_centrality(
+            compute_centrality_,
+            expression,
+            meta,
+            constraint,
+            iei_genes = iei_genes(),
+            gwas_genes = pics_ai_genes(),
+            trans_egenes = unique(read_eqtlgen_)$gene_name,
+            constraint_measure = "tj_constraint",
+            tag = "TJ"
         )
     ),
     # total graph analyses
@@ -594,18 +599,18 @@ list(
         name = scatter_upstream_constraint_,
         command = constraint_upstream_scatter(total_graph)
     ),
-    tar_target(
-        name = plot_total_graph_gwas,
-        command = plot_total_graph(total_graph, color = "is_gwas", color_label = "AI GWAS gene", tag = "gwas")
-    ),
-    tar_target(
-        name = plot_total_graph_iei,
-        command = plot_total_graph(total_graph, color = "is_iei", color_label = "IEI gene", tag = "iei")
-    ),
-    tar_target(
-        name = plot_total_graph_eqlten,
-        command = plot_total_graph(total_graph, color = "is_trans_egene", color_label = "eQTLgen trans-eGene", tag = "eqtlgen")
-    ),
+    # tar_target(
+    #     name = plot_total_graph_gwas,
+    #     command = plot_total_graph(total_graph, color = "is_gwas", color_label = "AI GWAS gene", tag = "gwas")
+    # ),
+    # tar_target(
+    #     name = plot_total_graph_iei,
+    #     command = plot_total_graph(total_graph, color = "is_iei", color_label = "IEI gene", tag = "iei")
+    # ),
+    # tar_target(
+    #     name = plot_total_graph_eqlten,
+    #     command = plot_total_graph(total_graph, color = "is_trans_egene", color_label = "eQTLgen trans-eGene", tag = "eqtlgen")
+    # ),
     tar_target(
         name = hbase,
         command = read_hbase(meta)
@@ -653,6 +658,14 @@ list(
     tar_target(
         name = pathway_plot_,
         command = plot_pathway(joint_downstream_model, txdb, "DR1", "R-HSA-202424")
+    ),
+    tar_target(
+        name = heatmap_cluster_annotations, #manually derived,
+        command = read_cluster_membership()
+    ),
+    tar_target(
+        name = RA_GWAS_loci,
+        command = annotate_RA_GWAS_loci(joint_downstream_model, heatmap_cluster_annotations, meta)
     ),
     tar_target(
         name = write_out_experiment_,
