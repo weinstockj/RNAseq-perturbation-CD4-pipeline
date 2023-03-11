@@ -204,3 +204,119 @@ plot_cytokine_proliferation_effect = function(proliferation, cytokine_hits, mash
 
     return(edges)
 }
+
+read_effectorness_genes = function(path = "/oak/stanford/groups/pritch/users/jweinstk/resources/effectorness_gradient/effector_genes.txt") {
+    readLines(path)
+}
+
+compute_effector_score = function(mashr, effector_genes, cytokine_hits, meta, lfsr_threshold = set_lfsr_threshold()) {
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "beta", -to) 
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm) %>%
+        dplyr::inner_join(
+            meta %>% 
+                add_gene_group_colors %>%
+                dplyr::distinct(KO, gene_group, color), 
+            by = c("from" = "KO")
+        )
+
+    edges = lfsr %>%
+        dplyr::filter(lfsr < .env[["lfsr_threshold"]])
+
+    effector_summary = edges %>%
+        dplyr::mutate(
+            is_effector = to %in% effector_genes
+        ) %>%
+        dplyr::group_by(from) %>%
+        dplyr::summarize(
+            effector_summary = sum(beta * is_effector),
+            effector_signed_summary = sum(sign(beta) * is_effector),
+            effector_upregulated_summary = sum(sign(beta) == 1 & is_effector),
+            effector_downregulated_summary = sum(sign(beta) == -1 & is_effector)
+        )
+
+    plot = effector_summary %>% 
+        dplyr::filter(abs(effector_signed_summary) >= 3) %>%
+        dplyr::inner_join(
+            meta %>% 
+                add_gene_group_colors %>%
+                dplyr::distinct(KO, gene_group, color), 
+            by = c("from" = "KO")
+        ) %>%
+        dplyr::mutate(
+            from = forcats::fct_reorder(from, effector_summary)
+        ) %>%
+        ggplot(data = ., aes(y = from, x = effector_summary, fill = gene_group)) +
+            geom_col() +
+            add_gene_group_fill_ggplot2() +
+            cowplot::theme_cowplot(font_size = 12) +
+            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype") +
+            theme(
+                axis.title.y = element_blank()
+            ) +
+            guides(fill = "none")
+        
+    ggsave(
+        file.path(figure_dir(), "effectorness_gradient.pdf"),
+        plot,
+        width = 6,
+        height = 6,
+        units = "in"
+    )
+
+    # spearman = 0.244, pvalue = 0.0244
+    TNF_plot = effector_summary %>%
+        dplyr::inner_join(cytokine_hits, by = c("from" = "gene_name")) %>%
+        dplyr::filter(CD4_or_CD8 == "CD4" & Cytokine == "TNF") %>%
+        ggplot(data = ., aes(x = effector_summary, zscore, colour = -log10(FDR), label = from)) +
+            geom_point() +
+            cowplot::theme_cowplot(font_size = 12) + 
+            scale_colour_viridis_c() + 
+            ggrepel::geom_text_repel() +
+            labs(
+                x = "Aggregate regulation of genes that\npromote an effector phenotype",
+                y = "TNF screen zscore",
+                colour = "-log10(FDR)"
+            )
+
+    ggsave(
+        file.path(figure_dir(), "TNF_effectorness.pdf"),
+        TNF_plot,
+        width = 6,
+        height = 4,
+        units = "in"
+    )
+
+    # spearman = 0.325, pvalue = 0.00235
+    IFNG_plot = effector_summary %>%
+        dplyr::inner_join(cytokine_hits, by = c("from" = "gene_name")) %>%
+        dplyr::filter(CD4_or_CD8 == "CD4" & Cytokine == "IFNG") %>%
+        ggplot(data = ., aes(x = effector_summary, zscore, colour = -log10(FDR), label = from)) +
+            geom_point() +
+            cowplot::theme_cowplot(font_size = 12) + 
+            scale_colour_viridis_c() + 
+            ggrepel::geom_text_repel() +
+            labs(
+                x = "Aggregate regulation of genes that\npromote an effector phenotype",
+                y = "IFNg screen zscore",
+                colour = "-log10(FDR)"
+            )
+
+    ggsave(
+        file.path(figure_dir(), "IFNG_effectorness.pdf"),
+        IFNG_plot,
+        width = 6,
+        height = 4,
+        units = "in"
+    )
+
+    return(effector_summary)
+}
