@@ -12,7 +12,7 @@ tar_option_set(
   packages = c(
     "tibble",
     "dplyr",
-    "purrr", 
+    "purrr",
     "DESeq2",
     "stringr",
     "rtracklayer",
@@ -48,13 +48,14 @@ source("R/validate_network.R")
 source("R/ABC_enrichment.R")
 source("R/pathway_plot.R")
 source("R/annotate_GWAS_loci.R")
+source("R/compare_to_yazar.R")
 
 # Replace the target list below with your own:
 list(
     tar_target(
         name = rna,
         command =  read_rna(rna_seq_location()),
-        format = "parquet" 
+        format = "parquet"
     ),
     tar_target(
         name = txdb,
@@ -150,7 +151,7 @@ list(
         command = plot_pairwise_effects(pairwise_joint_downstream, meta, tag = "joint_downstream")
     ),
     tar_target(
-        name = plot_covariance_pis_ ,
+        name = plot_covariance_pis_,
         command = plot_covariance_pis(mashr)
     ),
     tar_target(
@@ -175,14 +176,42 @@ list(
     ),
     tar_target(
         name = plot_causal_network,
-        command = plot_network(causal_network, meta, threshold = 0.025),
+        command = plot_network(
+            causal_network, 
+            meta, 
+            threshold = 0.025, 
+            tag = "causal",
+            layout = "stress",
+            niter = 700, 
+            bbox = 20,
+            scale_node_size_by_degree = TRUE,
+            width = 13.5,
+            height = 10,
+            label_size = 6.3
+        ),
         format = "file"
     ),
     tar_target(
-        name = plot_causal_network_dge,
-        command = plot_network(causal_network, meta, threshold = NULL, results = results_with_pcs, txdb),
+        name = plot_causal_network_sub_network_,
+        command = plot_network(
+            causal_network %>% dplyr::filter(row == "STAT1" | col == "STAT1"), 
+            meta, 
+            threshold = 0.025,
+            tag = "STAT1",
+            edges = "curved",
+            layout = "auto",
+            scale_node_size_by_degree = FALSE,
+            width = 7,
+            height = 5,
+            label_size = 4
+        ),
         format = "file"
     ),
+    # tar_target(
+    #     name = plot_causal_network_dge,
+    #     command = plot_network(causal_network, meta, threshold = NULL, results = results_with_pcs, txdb),
+    #     format = "file"
+    # ),
     tar_target(
         name = network_degree,
         command = compute_degree(causal_network)
@@ -457,9 +486,21 @@ list(
         command = write_gene_mask(gene_mask),
         format = "file"
     ),
+    # tar_target(
+    #     name = read_yazar_,
+    #     command = read_yazar_rans_eqtls()
+    # ),
     tar_target(
-        name = read_yazar_,
-        command = read_yazar_trans_eqtls()
+        name = cis_yazar,
+        command = read_yazar_cis_eqtls(meta)
+    ),
+    tar_target(
+        name = trans_yazar,
+        command = read_yazar_trans_eqtls(cis_yazar)
+    ),
+    tar_target(
+        name = yazar_comparison,
+        command = compare_to_yazar(cis_yazar, trans_yazar, constraint, meta)
     ),
     tar_target(
         name = tcell_subtype_specific_genes,
@@ -666,6 +707,71 @@ list(
     tar_target(
         name = RA_GWAS_loci,
         command = annotate_RA_GWAS_loci(joint_downstream_model, heatmap_cluster_annotations, meta)
+    ),
+    tar_target(
+        name = MS_GWAS_loci,
+        command = annotate_MS_GWAS_loci(joint_downstream_model, heatmap_cluster_annotations, meta)
+    ),
+    tar_target(
+        name = immune_GWAS_loci,
+        command = read_in_immune_GWAS()
+    ),
+    tar_target(
+        name = annotate_pan_immune_GWAS,
+        command = pan_immune_GWAS_enrichment(
+            immune_GWAS_loci, 
+            heatmap_cluster_annotations, 
+            joint_downstream_model,
+            txdb,
+            meta
+        )
+    ),
+    tar_target(
+        name = subset_causal_to_RA,
+        command= subset_causal_network_to_RA_gwas(causal_network, meta)
+    ),
+    tar_target(
+        name = RA_drug_upstream,
+        command = plot_drug_network(
+            joint_downstream_model,
+            drug_targets = read_RA_drugs(),
+            blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
+            constraint,
+            meta,
+            tag = "RA"
+        )
+    ),
+    tar_target(
+        name = MS_drug_upstream,
+        command = plot_drug_network(
+            joint_downstream_model,
+            drug_targets = read_MS_drugs(),
+            blood_specific_genes = convert_ensembl_to_symbol(blood_specific_genes, remove_ensembl_version_txdb(txdb)),
+            constraint,
+            meta,
+            tag = "MS"
+        )
+    ),
+    tar_target(
+        name = cluster_4_gwas_subnetwork_,
+        command = create_module_gwas_graph(causal_network, heatmap_cluster_annotations, annotate_pan_immune_GWAS, meta)
+        # command = create_module_gwas_graph(causal_network, heatmap_cluster_annotations, joint_downstream_model, ai_genes = pics_ai_genes(), meta)
+    ),
+    tar_target(
+        name = effector_genes,
+        command = read_effectorness_genes()
+    ),
+    tar_target(
+        name = effector_score,
+        command = compute_effector_score(joint_downstream_model, effector_genes, cytokine_hits, meta)
+    ),
+    tar_target(
+        name = pathfindr_results,
+        command = read_pathfindR_results()
+    ),
+    tar_target(
+        name = create_pathfinder_graph_,
+        command = create_pathfinder_graph(causal_network, pathfindr_results, heatmap_cluster_annotations, meta)
     ),
     tar_target(
         name = write_out_experiment_,
