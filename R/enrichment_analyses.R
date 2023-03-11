@@ -20,6 +20,10 @@ pics_ai_genes = function() {
     readLines(pics_ai_location())
 }
 
+read_pathfindR_results = function(path = "/oak/stanford/groups/pritch/users/jweinstk/perturbation_data/rnaseq_pipeline/scripts/output/diffeq/pathfindR_results/20230123_pathfindR_joint_all_KO_paths.csv") {
+    vroom::vroom(path)
+}
+
 read_iei = function() {
     # readLines(iei_location())
     vroom::vroom(iei_location()) %>%
@@ -46,22 +50,135 @@ read_iei = function() {
 read_iei = memoise::memoise(read_iei)
 
 trans_eqtls_yazar_location = function() {
-    "/oak/stanford/groups/pritch/users/jweinstk/resources/onek1k_yazar/table_16_onek1k_yazar.csv"
+    # "/oak/stanford/groups/pritch/users/jweinstk/resources/onek1k_yazar/table_16_onek1k_yazar.csv"
+    # a directory of parquets
+    "/oak/stanford/groups/pritch/users/jweinstk/resources/onek1k_yazar/OneK1K_raw_trans_eQTL_results/parquet"
+}
+
+cis_eqtls_yazar_location = function() {
+    "/oak/stanford/groups/pritch/users/jweinstk/resources/onek1k_yazar/table_ciseqtl_onek1k_yazar.csv"
 }
 
 trans_eqtls_eqtlgen_location = function() {
     "/oak/stanford/groups/pritch/users/jweinstk/resources/eqtlgen/2018-09-04-trans-eQTLsFDR0.05-CohortInfoRemoved-BonferroniAdded.txt.gz"
 }
 
-read_yazar_trans_eqtls = function() {
-    df = vroom::vroom(trans_eqtls_yazar_location()) %>%
+# read_yazar_trans_eqtls = function() {
+#     df = vroom::vroom(trans_eqtls_yazar_location()) %>%
+#         dplyr::filter(stringr::str_detect(`Cell type`, "CD4")) %>%
+#         dplyr::distinct(
+#             `trans_gene_name` = `trans eGene`,
+#             `cis_gene_name` = `cis eGene`
+#         )
+#
+#     df
+# }
+
+read_yazar_cis_eqtls = function(meta, path = cis_eqtls_yazar_location()) {
+
+    targets = meta %>%
+        dplyr::filter(!is_control) %>%
+        dplyr::pull(KO) %>%
+        unique %>%
+        as.character
+
+    df = arrow::read_csv_arrow(path, as_data_frame = FALSE) %>%
         dplyr::filter(stringr::str_detect(`Cell type`, "CD4")) %>%
-        dplyr::distinct(
-            `trans_gene_name` = `trans eGene`,
-            `cis_gene_name` = `cis eGene`
+        dplyr::select(
+            cell_type = `Cell type`,
+            gene_name_cis = `Gene ID`,
+            gene_id_cis   = `Gene Ensembl ID`,
+            SNP,
+            CHR = Chromosome,
+            POS = Position,
+            spearman_cis = `rho correlation coefficient`,
+            qvalue_cis = qvalue
+        ) %>%
+        dplyr::mutate(
+            CHR_POS = glue::glue("{CHR}:{POS}")
+        ) %>%
+        dplyr::filter(gene_name_cis %in% targets) %>%
+        dplyr::collect(.)
+
+    return(df)
+}
+
+read_yazar_trans_eqtls = function(cis, path = trans_eqtls_yazar_location()) {
+
+    logger::log_info("now reading in trans eQTLs from Yazar et al.")
+
+    ds = arrow::open_dataset(
+        path,
+        partitioning = arrow::DirectoryPartitioning$create(
+            arrow::schema(c("cell_type" = arrow::string()))
+        )
+    ) %>% 
+        dplyr::select(
+            gene_name_trans = gene,
+            CHR_POS = snp,
+            spearman_trans = corr.coeff,
+            qvalue_trans = qvalue,
+            FDR_trans = localFDR,
+            cell_type
+        ) %>%
+        dplyr::filter(CHR_POS %in% unique(cis$CHR_POS)) %>%
+        dplyr::collect(.) %>%
+        dplyr::mutate(
+            cell_type = dplyr::case_when(
+                cell_type == "CD4all" ~ "CD4 Naive",
+                cell_type == "CD4effCM" ~ "CD4 Effector",
+            )
         )
 
-    df
+    logger::log_info("done reading in trans eQTLs from Yazar et al.")
+
+    return(ds)
+}
+
+evaluate_yazar_trans_eqtl_density = function(path = trans_eqtls_yazar_location()) {
+
+    logger::log_info("now reading in trans eQTLs from Yazar et al.")
+
+    ds = arrow::open_dataset(
+        path,
+        partitioning = arrow::DirectoryPartitioning$create(
+            arrow::schema(c("cell_type" = arrow::string()))
+        )
+    )
+
+    density = purrr::map_dfr(c(1.00, 0.30, 0.20, 0.10, 0.05, 0.01), ~{
+
+        logger::log_info(glue::glue("now reading in trans-eQTLs at qvalue < {.x}"))
+
+        ds %>%
+            dplyr::select(
+                gene_name_trans = gene,
+                CHR_POS = snp,
+                spearman_trans = corr.coeff,
+                qvalue_trans = qvalue,
+                FDR_trans = localFDR,
+                cell_type
+            ) %>%
+            # dplyr::filter(qvalue_trans <= .env[[".x"]]) %>%
+            dplyr::filter(FDR_trans < .env[[".x"]]) %>%
+            dplyr::summarize(
+                n_genes = dplyr::n_distinct(gene_name_trans),
+                n_SNPs = dplyr::n_distinct(CHR_POS),
+                n_rows = dplyr::n(),
+                FDR_threshold = .x
+            ) %>%
+            dplyr::collect(.) 
+            # dplyr::mutate(
+            #     cell_type = dplyr::case_when(
+            #         cell_type == "CD4all" ~ "CD4 Naive",
+            #         cell_type == "CD4effCM" ~ "CD4 Effector",
+            #     )
+            # )
+    }, .progress = TRUE)
+
+    logger::log_info("done reading in trans eQTLs from Yazar et al.")
+
+    return(density)
 }
 
 read_eqtlgen_trans_eqtls = function() {
@@ -789,12 +906,12 @@ forest_plot_downstream_indegree_cell_type_specific = function(
                 term = str_remove_all(term, "TRUE"),
                 term_label = case_when(
                    term == "Control" ~ "Incoming connections from control TFs", 
-                   term == "is_TH1_specific" ~ "Th1 specific", 
-                   term == "is_TH2_specific" ~ "Th2 specific", 
-                   term == "is_TH17_specific" ~ "Th17 specific", 
-                   term == "is_naive_TREG_specific" ~ "Naive Treg specific", 
-                   term == "is_naive_CD4_specific" ~ "Naive CD4+ specific", 
-                   term == "is_memory_TREG_specific" ~ "Memory Treg specific", 
+                   term == "is_TH1_specific" ~ "Th1 enriched", 
+                   term == "is_TH2_specific" ~ "Th2 enriched", 
+                   term == "is_TH17_specific" ~ "Th17 enriched", 
+                   term == "is_naive_TREG_specific" ~ "Naive Treg enriched", 
+                   term == "is_naive_CD4_specific" ~ "Naive CD4+ enriched", 
+                   term == "is_memory_TREG_specific" ~ "Memory Treg enriched", 
                    term == "is_CD4_STIM_specific" ~ "Enriched for genes responsive to stimulation", 
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
