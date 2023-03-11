@@ -163,7 +163,7 @@ create_total_tidy_graph = function(
     
 }
 
-plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), results = NULL, txdb = NULL, output_dir = figure_dir()) {
+plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), results = NULL, txdb = NULL, output_dir = figure_dir(), tag = "", edges = "straight", layout = "stress", scale_node_size_by_degree = TRUE, width = 13.5, height = 10, label_size = 6.3, ...) {
 
 
     stopifnot(xor(is.null(threshold), is.null(results)))
@@ -191,9 +191,12 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
 
     # plot = ggraph(graph, "stress", bbox = 10) + 
     # plot = ggraph(graph, "auto", circular = TRUE) + 
-    plot = ggraph(graph, "stress", niter = 700, bbox = 20) + 
+    plot = ggraph(graph, layout, ...) 
     # plot = ggraph(graph, "centrality", cen = tidygraph::graph.strength(graph)) + 
                 # geom_edge_arc2(
+
+    if(edges == "straight") {
+        plot = plot + 
                 geom_edge_link(
                     aes(colour = signed_weight),
                         arrow = arrow(
@@ -205,28 +208,60 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
                         alpha = .25,
                         start_cap = circle(2.6, 'mm'),
                         end_cap = circle(2.6, 'mm')
-                ) +
-                # geom_node_point(aes(colour = gene_group)) +
-                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
-                # geom_node_point(aes(size = 2.5 + 0.08 * log1p(degree), color = I(color)), alpha = .7) +
-                geom_node_point(aes(size = 3.0 + 0.08 * sqrt(1L + degree), color = I(color)), alpha = .7) +
-                geom_node_label(
-                    aes(label = name, color = I(color)),
-                    size = 6.3,
-                    # colour = "black", 
-                    # family = "serif",
-                    check_overlap = TRUE,
-                    repel = TRUE
-                ) + 
-                labs(colour = "Control TF") +
-                theme_graph(base_family = "Helvetica")
+                ) 
 
-    fname = file.path(output_dir, glue::glue("ggplot_network_direct_effects_{threshold}.pdf"))
+    } else {
+        plot = plot + 
+                geom_edge_arc(
+                    aes(colour = signed_weight),
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        strength = .2,
+                        alpha = .5,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) 
+
+    }
+
+    plot = plot + 
+            # geom_node_point(aes(colour = gene_group)) +
+            scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red")  
+            # geom_node_point(aes(size = 2.5 + 0.08 * log1p(degree), color = I(color)), alpha = .7) +
+
+    if(scale_node_size_by_degree) {
+
+        plot = plot +
+            geom_node_point(aes(size = 3.0 + 0.08 * sqrt(1L + degree), color = I(color)), alpha = .7) 
+    } else {
+        plot = plot + 
+            geom_node_point(aes(color = I(color)), alpha = .7) 
+    }
+
+    plot = plot + 
+            geom_node_label(
+                aes(label = name, color = I(color)),
+                size = label_size,
+                # colour = "black", 
+                # family = "serif",
+                check_overlap = TRUE,
+                repel = TRUE
+            ) + 
+            labs(colour = "Control TF") +
+            theme_graph(base_family = "Helvetica")
+
+    fname = file.path(output_dir, glue::glue("ggplot_network_direct_effects_{threshold}_{tag}.pdf"))
     ggsave(
         fname,
         plot,
-        width = 13.5,
-        height = 10,
+        # width = 13.5,
+        width = width,
+        # height = 10,
+        height = height,
         units = "in"
     )
 
@@ -495,4 +530,222 @@ plot_total_graph = function(total_graph, color, color_label, tag) {
         height = 10,
         units = "in"
     )
+}
+
+create_pathfinder_graph = function(causal_network, pathfindr_results, cluster_membership, meta, threshold = set_causal_threshold()) {
+
+    select_pathways = c(
+        "T cell receptor signaling pathway",
+        "TNF signaling pathway",
+        "NF-kappa B signaling pathway",
+        "Ribosome",
+        "Th1 and Th2 cell differentiation"
+    )
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        dplyr::inner_join(
+            cluster_membership %>% dplyr::select(from_cluster = cluster, gene_name),
+            by = c("row" = "gene_name")
+        ) %>%
+        dplyr::inner_join(
+            cluster_membership %>% dplyr::select(to_cluster = cluster, gene_name),
+            by = c("col" = "gene_name")
+        ) 
+
+    pathfindr_results = pathfindr_results %>%
+        dplyr::filter(Term_Description %in% .env[["select_pathways"]]) %>%
+        dplyr::inner_join(
+            cluster_membership %>% dplyr::select(from_cluster = cluster, gene_name),
+            by = c("KO" = "gene_name")
+        )
+
+    print(pathfindr_results)
+
+    pathfinder_edges = pathfindr_results %>%
+        # dplyr::rename(from = KO) %>%
+        dplyr::rename(from = from_cluster) %>%
+        dplyr::filter(Fold_Enrichment >= 4) %>%
+        dplyr::select(from, to = Term_Description) %>%
+        dplyr::distinct(.)
+
+    print(pathfinder_edges)
+
+    edges = edges %>%
+        # dplyr::select(from = row, to = col) %>%
+        dplyr::select(from = from_cluster, to = to_cluster) %>%
+        dplyr::distinct(.) %>%
+        dplyr::bind_rows(pathfinder_edges)
+
+    active_nodes = unique(c(edges$from, edges$to))
+
+    pathfinder_nodes = pathfinder_edges %>%
+        # dplyr::filter(from %in% .env[["active_nodes"]]) %>%
+        dplyr::select(name = to) %>%
+        dplyr::mutate(cluster = "downstream") %>%
+        dplyr::distinct(.)
+
+    # status = meta %>%
+    #     dplyr::filter(!is_control) %>%
+    #     dplyr::distinct(name = KO, gene_group) %>%
+    #     dplyr::inner_join(cluster_membership, by = c("name" = "gene_name")) %>%
+    status = cluster_membership %>% 
+        dplyr::select(name = cluster) %>%
+        dplyr::bind_rows(pathfinder_nodes) %>%
+        dplyr::distinct(.)
+
+    print(pathfinder_nodes)
+    print(status)
+
+    logger::log_info('here')
+
+    # browser()
+    graph = tidygraph::tbl_graph(
+        status,
+        edges
+    )
+   
+
+    plot = ggraph(graph, "auto") + 
+                geom_edge_arc2(
+                # geom_edge_link(
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        alpha = .3,
+                        strength = 0.3,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) +
+                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                geom_node_point(aes(color = name)) +
+                geom_node_text(
+                    aes(label = name, color = name),
+                    size = 4.5,
+                    # colour = "black", 
+                    # family = "serif",
+                    check_overlap = TRUE,
+                    repel = TRUE
+                ) + 
+                theme_graph(base_family = "Helvetica")
+
+    fname = file.path(figure_dir(), glue::glue("pathfinder_cluster_network.pdf"))
+    ggsave(
+        fname,
+        plot,
+        width = 11,
+        height = 6,
+        units = "in"
+    )
+}
+
+create_module_gwas_graph = function(causal_network, cluster_membership, downstream_immune_GWAS, meta, threshold = set_causal_threshold()) {
+
+    select_modules = c(
+                        "4A"
+    )
+
+    cluster_genes = cluster_membership %>%
+        dplyr::filter(cluster == .env[["select_modules"]]) %>%
+        dplyr::pull(gene_name)
+
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        dplyr::filter(col %in% cluster_genes & row %in% cluster_genes) %>%
+        dplyr::rename(from = row, to = col)
+
+    downstream_edges = downstream_immune_GWAS[[2]] %>%
+        dplyr::filter(cluster == .env[["select_modules"]]) %>%
+        dplyr::select(
+            from,
+            to,
+            estimate = beta,
+            `Multiple sclerosis`,
+            `Type 1 diabetes`,
+            `Lupus`,
+            `Rheumatoid arthritis`
+        )
+
+    print(downstream_edges %>% dplyr::distinct(to))
+
+    downstream_edges %>%
+        dplyr::filter(
+            `Multiple sclerosis` |
+            `Type 1 diabetes` | 
+            `Lupus` |
+            `Rheumatoid arthritis`
+        ) %>%
+        dplyr::filter(!stringr::str_detect(to, "HLA-")) %>%
+        dplyr::distinct(to) %>%
+        print
+
+    downstream_edges = downstream_edges %>%
+        dplyr::filter(
+            `Multiple sclerosis` 
+            # `Type 1 diabetes` 
+        ) %>%
+        dplyr::filter(!stringr::str_detect(to, "HLA-")) 
+
+    edges = edges %>%
+        dplyr::bind_rows(downstream_edges) 
+
+    status = tibble::tibble(
+                name = unique(c(edges$from, edges$to))
+            )
+
+    gwas_genes = downstream_immune_GWAS[[3]] %>%
+        dplyr::filter(
+            `Multiple sclerosis` 
+            # `Type 1 diabetes` 
+        ) %>%
+        dplyr::pull(gene_name)
+
+    status = status %>%
+        dplyr::mutate(is_gwas = name %in% gwas_genes)
+
+    graph = tidygraph::tbl_graph(
+        status,
+        edges
+    )
+   
+
+    plot = ggraph(graph, "tree") + 
+                geom_edge_arc2(
+                # geom_edge_link(
+                        aes(colour = estimate),
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        alpha = .6,
+                        strength = 0.1,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) +
+                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                geom_node_point() +
+                geom_node_text(
+                    aes(label = name, color = is_gwas),
+                    size = 4.0,
+                    # colour = "black", 
+                    # family = "serif",
+                    check_overlap = TRUE,
+                    repel = TRUE
+                ) + 
+                theme_graph(base_family = "Helvetica")
+
+    fname = file.path(figure_dir(), glue::glue("cluster_4_network.pdf"))
+    ggsave(
+        fname,
+        plot,
+        width = 9,
+        height = 6,
+        units = "in"
+    )
+
+    return(graph)
 }
