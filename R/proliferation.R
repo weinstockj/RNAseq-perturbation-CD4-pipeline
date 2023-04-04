@@ -209,7 +209,7 @@ read_effectorness_genes = function(path = "/oak/stanford/groups/pritch/users/jwe
     readLines(path)
 }
 
-compute_effector_score = function(mashr, effector_genes, cytokine_hits, meta, lfsr_threshold = set_lfsr_threshold()) {
+compute_effector_score = function(mashr, effector_genes, cytokine_hits, cluster_membership, meta, lfsr_threshold = set_lfsr_threshold()) {
 
     pm = ashr::get_pm(mashr) %>%
         tibble::as_tibble(.) %>%
@@ -222,10 +222,14 @@ compute_effector_score = function(mashr, effector_genes, cytokine_hits, meta, lf
         tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
         dplyr::inner_join(pm) %>%
         dplyr::inner_join(
-            meta %>% 
+            meta %>%
                 add_gene_group_colors %>%
                 dplyr::distinct(KO, gene_group, color), 
             by = c("from" = "KO")
+        ) %>%
+        dplyr::inner_join(
+            cluster_membership %>% dplyr::select(from_cluster = cluster, from_main_cluster = main_cluster, gene_name),
+            by = c("from" = "gene_name")
         )
 
     edges = lfsr %>%
@@ -235,40 +239,66 @@ compute_effector_score = function(mashr, effector_genes, cytokine_hits, meta, lf
         dplyr::mutate(
             is_effector = to %in% effector_genes
         ) %>%
-        dplyr::group_by(from) %>%
+        dplyr::group_by(from, from_cluster, from_main_cluster) %>%
         dplyr::summarize(
             effector_summary = sum(beta * is_effector),
             effector_signed_summary = sum(sign(beta) * is_effector),
             effector_upregulated_summary = sum(sign(beta) == 1 & is_effector),
             effector_downregulated_summary = sum(sign(beta) == -1 & is_effector)
-        )
+        ) %>%
+        dplyr::ungroup(.)
+
+    effector_summary_by_cluster = edges %>%
+        dplyr::mutate(
+            is_effector = to %in% effector_genes
+        ) %>%
+        dplyr::group_by(from_cluster, from_main_cluster) %>%
+        dplyr::summarize(
+            effector_summary = sum(beta * is_effector),
+            effector_signed_summary = sum(sign(beta) * is_effector),
+            effector_upregulated_summary = sum(sign(beta) == 1 & is_effector),
+            effector_downregulated_summary = sum(sign(beta) == -1 & is_effector)
+        ) %>%
+        dplyr::ungroup(.)
 
     plot = effector_summary %>% 
         dplyr::filter(abs(effector_signed_summary) >= 3) %>%
-        dplyr::inner_join(
-            meta %>% 
-                add_gene_group_colors %>%
-                dplyr::distinct(KO, gene_group, color), 
-            by = c("from" = "KO")
-        ) %>%
         dplyr::mutate(
             from = forcats::fct_reorder(from, effector_summary)
         ) %>%
-        ggplot(data = ., aes(y = from, x = effector_summary, fill = gene_group)) +
+        ggplot(data = ., aes(y = from, x = effector_summary, fill = from_cluster)) +
             geom_col() +
-            add_gene_group_fill_ggplot2() +
             cowplot::theme_cowplot(font_size = 12) +
-            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype") +
+            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype", fill = "Gene module") +
             theme(
                 axis.title.y = element_blank()
-            ) +
-            guides(fill = "none")
+            ) 
+
+    plot_cluster = effector_summary_by_cluster %>% 
+        dplyr::mutate(
+            from_cluster = forcats::fct_reorder(from_cluster, effector_summary)
+        ) %>%
+        ggplot(data = ., aes(y = from_cluster, x = effector_summary, fill = factor(from_main_cluster))) +
+            geom_col() +
+            cowplot::theme_cowplot(font_size = 12) +
+            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype", fill = "Gene module") +
+            theme(
+                axis.title.y = element_blank()
+            )
         
     ggsave(
         file.path(figure_dir(), "effectorness_gradient.pdf"),
         plot,
-        width = 6,
+        width = 5,
         height = 6,
+        units = "in"
+    )
+
+    ggsave(
+        file.path(figure_dir(), "effectorness_gradient_by_cluster.pdf"),
+        plot_cluster,
+        width = 5,
+        height = 4,
         units = "in"
     )
 
