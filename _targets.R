@@ -758,21 +758,25 @@ list(
         # command = create_module_gwas_graph(causal_network, heatmap_cluster_annotations, joint_downstream_model, ai_genes = pics_ai_genes(), meta)
     ),
     tar_target(
+        name = cluster_4_JAK_STAT_subnetwork_,
+        command = create_module_pathway_graph(causal_network, joint_downstream_model, heatmap_cluster_annotations, "04630", meta)
+    ),
+    tar_target(
         name = effector_genes,
         command = read_effectorness_genes()
     ),
     tar_target(
         name = effector_score,
-        command = compute_effector_score(joint_downstream_model, effector_genes, cytokine_hits, meta)
+        command = compute_effector_score(joint_downstream_model, effector_genes, cytokine_hits, heatmap_cluster_annotations, meta)
     ),
     tar_target(
         name = pathfindr_results,
         command = read_pathfindR_results()
     ),
-    tar_target(
-        name = create_pathfinder_graph_,
-        command = create_pathfinder_graph(causal_network, pathfindr_results, heatmap_cluster_annotations, meta)
-    ),
+    # tar_target(
+    #     name = create_pathfinder_graph_,
+    #     command = create_pathfinder_graph(causal_network, pathfindr_results, heatmap_cluster_annotations, meta)
+    # ),
     tar_target(
         name = write_out_experiment_,
         command = write_out_experiment(meta, diffeq_with_pcs, pca, mashr, results_with_pcs, results_no_pcs, txdb),
