@@ -630,7 +630,7 @@ forest_plot_causal_centrality = function(
                 term_label = case_when(
                    term == "is_trans_egene" ~ "Is an eQTLgen trans-eGene", 
                    term == "pLI" ~ "Constraint (pLI)",
-                   term == "tj_constraint" ~ "Constraint (Zeng-Spence)",
+                   term == "tj_constraint" ~ "Constraint (Shet)",
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
                 ),
@@ -649,9 +649,10 @@ forest_plot_causal_centrality = function(
         # scale_x_continuous(labels = scales::percent, breaks = scales::breaks_pretty(n = 3)) +
         # scale_x_continuous(trans = "log10", breaks = c(0.1, 1, 10, 100)) +
         cowplot::theme_cowplot(font_size = 12) +
-        cowplot::background_grid() + 
+        # cowplot::background_grid() + 
         cowplot::panel_border() +
         geom_vline(xintercept = 0, color = "gray", linetype = "dashed", alpha = .7) +
+        scale_color_manual(values = c("TRUE" = "#c23121", "FALSE" = "grey")) +
         geom_pointrange() +
         labs(x = "log(fold increase in connections) (95% CI)", color = "pvalue < 0.05") +
         theme(
@@ -799,7 +800,7 @@ forest_plot_downstream_indegree = function(
                    term == "is_tcell_specific" ~ "Is a T-cell specific gene", 
                    term == "is_blood_specific" ~ "Is a whole blood specific gene", 
                    term == "pLI" ~ "Constraint (pLI)",
-                   term == "tj_constraint" ~ "Constraint (Zeng-Spence)",
+                   term == "tj_constraint" ~ "Constraint (Shet)",
                    term == "expression" ~ "Expression at baseline",
                    TRUE ~ term
                 ),
@@ -817,10 +818,11 @@ forest_plot_downstream_indegree = function(
         facet_wrap(~label) +
         scale_x_continuous(labels = scales::percent, breaks = scales::breaks_pretty(n = 4)) +
         cowplot::theme_cowplot(font_size = 12) +
-        cowplot::background_grid() + 
+        # cowplot::background_grid() + 
         cowplot::panel_border() +
         geom_vline(xintercept = 0, color = "gray", linetype = "dashed", alpha = .7) +
         geom_pointrange() +
+        scale_color_manual(values = c("TRUE" = "#c23121", "FALSE" = "grey")) +
         labs(x = "Percentage increase in incoming connections (95% CI)", color = "pvalue < 0.05") +
         theme(
             axis.title.y = element_blank()
@@ -930,8 +932,9 @@ forest_plot_downstream_indegree_cell_type_specific = function(
         facet_wrap(~label) +
         scale_x_continuous(labels = scales::percent, breaks = scales::breaks_pretty(n = 4)) +
         cowplot::theme_cowplot(font_size = 12) +
-        cowplot::background_grid() + 
+        # cowplot::background_grid() + 
         cowplot::panel_border() +
+        scale_color_manual(values = c("TRUE" = "#c23121", "FALSE" = "grey")) +
         geom_vline(xintercept = 0, color = "gray", linetype = "dashed", alpha = .7) +
         geom_pointrange() +
         labs(x = "Percentage increase in incoming connections (95% CI)", color = "pvalue < 0.05") +
