@@ -709,9 +709,37 @@ create_module_gwas_graph = function(causal_network, cluster_membership, downstre
         status,
         edges
     )
-   
 
-    plot = ggraph(graph, "tree") + 
+    manual_layout = tibble::tribble(
+        ~name, ~x, ~y,
+        "IRF4", -5, 8,
+        "JAK3", 5, 8,
+        "KMT2A", 0, 16,
+        "STAT5A", 2, 8,
+        "STAT5B", -2, 8,
+        "IL2RA", 10, 8,
+        "NCR3", 14, 0,
+        "IER3", -10, 0,
+        "PSMB9", -14, 0,
+        "UQCC2", 16, 0,
+        "BAK1", -8, 0,
+        "MDC1", -6, 0,
+        "TCF19", -4, 0,
+        "BTN3A3", -12, 0,
+        "ABCF1", -1, 0,
+        "MRPS18B", 2, 0,
+        "GABBR1", 5, 0,
+        "GNL1", 7, 0,
+        "AGPAT1", 9, 0,
+        "AIF1", 12, 0
+    )
+
+    graph = graph %>%
+        tidygraph::activate(nodes) %>%
+        tidygraph::inner_join(manual_layout, by = "name")
+
+    # plot = ggraph(graph, "tree") + 
+    plot = ggraph(graph, x = x, y = y) + 
                 geom_edge_arc2(
                 # geom_edge_link(
                         aes(colour = estimate),
@@ -729,21 +757,201 @@ create_module_gwas_graph = function(causal_network, cluster_membership, downstre
                 scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
                 geom_node_point() +
                 geom_node_text(
-                    aes(label = name, color = is_gwas),
+                    # aes(label = name, color = is_gwas),
+                    aes(label = name),
                     size = 4.0,
                     # colour = "black", 
                     # family = "serif",
                     check_overlap = TRUE,
                     repel = TRUE
                 ) + 
-                theme_graph(base_family = "Helvetica")
+                theme_graph(base_family = "Helvetica") +
+                theme(legend.position = "top")
 
-    fname = file.path(figure_dir(), glue::glue("cluster_4_network.pdf"))
+    fname = file.path(figure_dir(), glue::glue("cluster_4_network_manual_layout.pdf"))
     ggsave(
         fname,
         plot,
         width = 9,
         height = 6,
+        units = "in"
+    )
+
+    return(graph)
+}
+
+create_module_pathway_graph = function(causal_network, mashr, cluster_membership, downstream_pathway = "04630", meta, threshold = set_causal_threshold(), lfsr_threshold = set_lfsr_threshold()) {
+
+    select_modules = c(
+                        "4A"
+    )
+
+    pathway_entrez_ids = as.list(org.Hs.eg.db::org.Hs.egPATH2EG)[[downstream_pathway]] %>%
+        as.character
+
+    print("here 1")
+    pathway_gene_names = AnnotationDbi::mapIds(
+                            org.Hs.eg.db::org.Hs.eg.db,
+                            keys = pathway_entrez_ids,
+                            column = "SYMBOL",
+                            keytype = "ENTREZID"
+                        )
+
+    cluster_genes = cluster_membership %>%
+        dplyr::filter(cluster == .env[["select_modules"]]) %>%
+        dplyr::pull(gene_name)
+
+    print("here 1.5")
+
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        dplyr::filter(col %in% cluster_genes & row %in% cluster_genes) %>%
+        dplyr::rename(from = row, to = col, signed_weight = estimate)
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "signed_weight", -to) %>%
+        dplyr::mutate(weight = abs(signed_weight))
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm) %>%
+        dplyr::inner_join(
+            meta %>% dplyr::distinct(KO, gene_group), 
+            by = c("from" = "KO")
+        )
+
+    print("here 2")
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::filter(to %in% .env[["pathway_gene_names"]]) %>%
+        dplyr::filter(from %in% cluster_genes) %>%
+        dplyr::select(from, to, signed_weight, weight)
+
+    print(downstream_edges %>% dplyr::distinct(to))
+
+
+    edges = edges %>%
+        dplyr::bind_rows(downstream_edges)
+    
+    print(edges)
+
+    status = tibble::tibble(
+                name = unique(c(edges$from, edges$to))
+            )
+
+    graph = tidygraph::tbl_graph(
+        status,
+        edges
+    )
+
+    level_0 = 16
+    level_1 = 8
+    level_2 = 0
+    level_3 = -4
+    level_4 = -2
+    manual_layout = tibble::tribble(
+        ~name, ~x, ~y,
+        "IRF4", -5, level_1,
+        "JAK3", 5, level_1,
+        "KMT2A", 0, level_0,
+        "STAT5A", 2, level_1,
+        "STAT5B", -2, level_1,
+        "IL2RA", 10, level_1,
+        "JAK1", 5, level_2,
+        "SOS1", 16, level_2,
+        "CBLB", -20, level_2,
+        "IL7R", -18, level_3,
+        "MYC", -16, level_2,
+        "JAK2", -14, level_2,
+        "IL10RA", 15, level_3,
+        "PTPN6", -12, level_2,
+        "IL26", -10, level_3,
+        "PIAS1", -9, level_2,
+        "OSM", 2, level_2,
+        "IL12RB2", 17, level_3,
+        "IFNG", -2, level_3,
+        "IL6R", 0, level_3,
+        "IL21", -1, level_3,
+        "PIK3CB", 15, level_2,
+        "IFNGR2", 1, level_3,
+        "CCND3", -7, level_2,
+        "SOCS3", -4, level_2,
+        "CCND2", 4, level_2,
+        "CISH", -5, level_2,
+        "IL2RB", 3, level_3,
+        "IL22", 9, level_3,
+        "IL23R", 7, level_3,
+        "IL6ST", 18, level_3,
+        "LIF", 20, level_2,
+        "SOCS2", 7, level_2,
+        "STAT4", 4.5, level_2,
+        "IL4R", 22, level_3,
+        "SOCS1", 2.5, level_2,
+        "IL2RG", 23, level_3,
+        "IL15", 3.5, level_3,
+        "IL13", 21, level_3,
+        "IFNGR1", 8, level_3,
+        "SPRED2", 9, level_2,
+        "IL15RA", 24, level_3,
+        "IFNAR2", 25, level_3,
+        "IL9", 19, level_3,
+        "IL21R", -11, level_3,
+        "AKT3", 26, level_2,
+        "IL12RB1", 14, level_3,
+        "IL5", 6, level_3
+    )
+
+    manual_layout %>%
+        dplyr::add_count(x, y) %>%
+        dplyr::arrange(desc(n)) %>%
+        dplyr::filter(n > 1) %>%
+        as.data.frame %>%
+        print
+
+    graph = graph %>%
+        tidygraph::activate(nodes) %>%
+        tidygraph::inner_join(manual_layout, by = "name")
+
+    # plot = ggraph(graph, "tree") + 
+    plot = ggraph(graph, x = x, y = y) + 
+                geom_edge_arc2(
+                # geom_edge_link(
+                        aes(colour = signed_weight),
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        alpha = .4,
+                        strength = 0.1,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) +
+                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                geom_node_point() +
+                geom_node_text(
+                    # aes(label = name, color = is_gwas),
+                    aes(label = name),
+                    size = 3.0,
+                    # colour = "black", 
+                    # family = "serif",
+                    check_overlap = TRUE,
+                    repel = TRUE
+                ) + 
+                theme_graph(base_family = "Helvetica") +
+                theme(legend.position = "top", legend.key.width = unit(1, "cm"))
+
+    fname = file.path(figure_dir(), glue::glue("cluster_4_network_pathway_manual_layout.pdf"))
+    ggsave(
+        fname,
+        plot,
+        width = 12,
+        height = 8,
         units = "in"
     )
 
