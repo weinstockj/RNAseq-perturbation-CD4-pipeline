@@ -461,12 +461,13 @@ read_julia_targets = function(file = julia_targets_location()) {
 
 
 write_out_experiment = function(
-    meta, 
-    diffeq, 
-    pca, 
-    mashr, 
-    results_regressed_pcs, 
-    results_no_pcs, 
+    meta,
+    diffeq,
+    pca,
+    mashr,
+    results_regressed_pcs,
+    results_no_pcs,
+    module_genes,
     txdb) {
 
     output_files = c(
@@ -480,38 +481,37 @@ write_out_experiment = function(
         "normalized_counts" = file.path(txt_dir(), "normalized_counts.tsv"),
         "txdb" = file.path(txt_dir(), "txdb.tsv"),
         "deg_results_regressed_pcs" = file.path(txt_dir(), "differential_expression_results_regressed_pcs.tsv"),
-        "deg_results_no_pcs" = file.path(txt_dir(), "differential_expression_results.tsv")
+        "deg_results_no_pcs" = file.path(txt_dir(), "differential_expression_results.tsv"),
+        "module_genes" = file.path(txt_dir(), "module_genes_including_downstream.tsv")
     )
 
     scores = pca$x %>%
         tibble::as_tibble(rownames = "sample") %>%
         dplyr::inner_join(meta, by = "sample")
 
-    meta_names = names(meta) 
+    meta_names = names(meta)
 
     kod_genes = meta %>%
         dplyr::filter(!is_control) %>%
         dplyr::select(gene_name = KO) %>%
         dplyr::distinct(.) %>%
         dplyr::inner_join(txdb, by = "gene_name")
-    
+
     intervention_indicator = meta %>%
         dplyr::mutate(value = 1L) %>%
         dplyr::select(-Donor) %>%
         tidyr::pivot_wider(names_from = "KO", values_from = "value", values_fill = 0L) %>%
         dplyr::select(-sample, -any_of(meta_names))
-        
+
     readr::write_tsv(intervention_indicator, output_files["intervention"])
 
     # samples x genes
     normalized = DESeq2::vst(diffeq, blind = FALSE) %>%
-        SummarizedExperiment::assay(.) %>% 
+        SummarizedExperiment::assay(.) %>%
         t %>%
         tibble::as_tibble(rownames = "Sample")
 
     readr::write_tsv(normalized, output_files["vst_normalized_counts"])
-
-    log_info("Here 1")
 
     # samples x (genes - KO'd genes)
     normalized_no_kos = normalized %>%
@@ -519,12 +519,14 @@ write_out_experiment = function(
 
     readr::write_tsv(normalized_no_kos, output_files["vst_normalized_counts_no_kos"])
 
-    log_info("Here 2")
-
     # samples x (only KO'd genes)
     normalized_only_kos = normalized %>%
         dplyr::select(Sample, all_of(kod_genes$gene_id)) %>%
-        dplyr::inner_join(meta %>% dplyr::select(Sample = sample, gene_name = KO), by = "Sample") %>%
+        dplyr::inner_join(
+                          meta %>%
+                              dplyr::select(Sample = sample, gene_name = KO),
+                by = "Sample"
+        ) %>%
         dplyr::left_join(txdb, by = "gene_name")
 
     for(g in kod_genes$gene_id) {
@@ -554,7 +556,7 @@ write_out_experiment = function(
 
     # genes x samples
     normalized = DESeq2::vst(diffeq, blind = FALSE) %>%
-        SummarizedExperiment::assay(.) %>% 
+        SummarizedExperiment::assay(.) %>%
         tibble::as_tibble(rownames = "gene_id")
 
     readr::write_tsv(normalized, output_files["vst_normalized_counts_transpose"])
@@ -595,6 +597,12 @@ write_out_experiment = function(
     )
 
     readr::write_tsv(significant, output_files["mashr_significant_rows"])
+
+    module_genes %>%
+        tibble::enframe(.) %>%
+        tidyr::unnest(cols = value) %>%
+        dplyr::rename(cluster = name, gene_name = value) %>%
+        readr::write_tsv(output_files["module_genes"])
 
     return(output_files)
 }

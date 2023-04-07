@@ -957,3 +957,46 @@ create_module_pathway_graph = function(causal_network, mashr, cluster_membership
 
     return(graph)
 }
+
+compute_modules_with_downstream = function(mashr, cluster_membership, lfsr_threshold = set_lfsr_threshold()) {
+
+    cluster_labels = unique(cluster_membership$cluster)
+
+    cluster_genes = cluster_membership %>%
+        dplyr::group_by(cluster) %>%
+        dplyr::group_map(~.x$gene_name) %>%
+        purrr::set_names(cluster_labels)
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "signed_weight", -to) %>%
+        dplyr::mutate(weight = abs(signed_weight))
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm)
+
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::select(from, to, signed_weight, weight) %>%
+        dplyr::inner_join(
+            cluster_membership %>% dplyr::select(from_cluster = cluster, gene_name),
+            by = c("from" = "gene_name")
+        )
+
+    cluster_genes = purrr::map(cluster_labels, ~{
+            upstream = cluster_genes[[.x]]
+            downstream = downstream_edges %>%
+                dplyr::filter(from_cluster == .env[[".x"]]) %>%
+                dplyr::pull(to) %>%
+                unique
+
+            return(c(upstream, downstream))
+        }) %>%
+        purrr::set_names(cluster_labels)
+
+    return(cluster_genes)
+}
