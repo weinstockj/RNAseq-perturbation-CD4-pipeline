@@ -778,8 +778,12 @@ list(
     #     command = create_pathfinder_graph(causal_network, pathfindr_results, heatmap_cluster_annotations, meta)
     # ),
     tar_target(
+        name = module_genes,
+        command = compute_modules_with_downstream(joint_downstream_model, heatmap_cluster_annotations)
+    ),
+    tar_target(
         name = write_out_experiment_,
-        command = write_out_experiment(meta, diffeq_with_pcs, pca, mashr, results_with_pcs, results_no_pcs, txdb),
+        command = write_out_experiment(meta, diffeq_with_pcs, pca, mashr, results_with_pcs, results_no_pcs, module_genes, txdb),
         format = "file"
     )
 )
