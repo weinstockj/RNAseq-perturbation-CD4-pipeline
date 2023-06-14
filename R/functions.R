@@ -465,6 +465,7 @@ write_out_experiment = function(
     diffeq,
     pca,
     mashr,
+    joint_downstream_model,
     results_regressed_pcs,
     results_no_pcs,
     module_genes,
@@ -478,11 +479,13 @@ write_out_experiment = function(
         "vst_normalized_counts_no_kos" = file.path(txt_dir(), "vst_normalized_counts_no_kos.tsv"),
         "vst_normalized_counts_only_kos" = file.path(txt_dir(), "vst_normalized_counts_only_kos.tsv"),
         "vst_normalized_counts_transpose" = file.path(txt_dir(), "vst_normalized_counts_transpose.tsv"),
+        "joint_downstream_model" = file.path(txt_dir(), "joint_downstream_model_differential_expression.tsv"),
         "normalized_counts" = file.path(txt_dir(), "normalized_counts.tsv"),
         "txdb" = file.path(txt_dir(), "txdb.tsv"),
         "deg_results_regressed_pcs" = file.path(txt_dir(), "differential_expression_results_regressed_pcs.tsv"),
         "deg_results_no_pcs" = file.path(txt_dir(), "differential_expression_results.tsv"),
-        "module_genes" = file.path(txt_dir(), "module_genes_including_downstream.tsv")
+        "module_genes" = file.path(txt_dir(), "module_genes_including_downstream.tsv"),
+        "positive_module_genes" = file.path(txt_dir(), "positively_regulated_module_genes_including_downstream.tsv")
     )
 
     scores = pca$x %>%
@@ -598,11 +601,39 @@ write_out_experiment = function(
 
     readr::write_tsv(significant, output_files["mashr_significant_rows"])
 
-    module_genes %>%
+    module_genes$all_genes %>%
         tibble::enframe(.) %>%
         tidyr::unnest(cols = value) %>%
         dplyr::rename(cluster = name, gene_name = value) %>%
         readr::write_tsv(output_files["module_genes"])
+
+    module_genes$only_positively_regulated %>%
+        tibble::enframe(.) %>%
+        tidyr::unnest(cols = value) %>%
+        dplyr::rename(cluster = name, gene_name = value) %>%
+        readr::write_tsv(output_files["positive_module_genes"])
+
+    pm = ashr::get_pm(joint_downstream_model) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = joint_downstream_model$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "posterior_mean", -to)
+
+    psd = ashr::get_psd(joint_downstream_model) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = joint_downstream_model$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "posterior_sd", -to)
+
+    lfsr = ashr::get_lfsr(joint_downstream_model) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = joint_downstream_model$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(psd) %>%
+        dplyr::inner_join(pm)
+
+    downstream_edges = lfsr %>%
+        dplyr::select(from, to, posterior_mean, posterior_sd, lfsr)
+
+    readr::write_tsv(downstream_edges, output_files["joint_downstream_model"])
 
     return(output_files)
 }
