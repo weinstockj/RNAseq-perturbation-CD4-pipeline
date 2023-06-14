@@ -661,7 +661,7 @@ forest_plot_causal_centrality = function(
 
     fname = file.path(figure_dir(), glue::glue("causal_network_forest_{tag}.pdf"))
     
-    ggsave(fname, plot, width = 6, height = 4, units = "in")
+    ggsave(fname, plot, width = 5.5, height = 3, units = "in")
 
     plot = ggplot(
         data = tidy_models_no_group %>%
@@ -702,7 +702,7 @@ forest_plot_causal_centrality = function(
 
     fname = file.path(figure_dir(), glue::glue("causal_network_forest_no_group_covariate_{tag}.pdf"))
     
-    ggsave(fname, plot, width = 6, height = 3, units = "in")
+    ggsave(fname, plot, width = 5.5, height = 3, units = "in")
         
     return(list(
         "full_model" = tidy_models,
