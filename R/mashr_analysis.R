@@ -360,6 +360,7 @@ extract_ko_specific_effects = function(mashr, txdb, lfsr_threshold = set_lfsr_th
 }
 
 plot_ko_specific_effects = function(ko_specific_effects, meta, tag = NULL) {
+
     counts = purrr::map_dbl(ko_specific_effects, length) %>%
         tibble::enframe(.) %>%
         dplyr::arrange(desc(value)) %>%
@@ -413,6 +414,36 @@ plot_ko_specific_effects = function(ko_specific_effects, meta, tag = NULL) {
         fname = file.path(figure_dir(), "ko_specific_effects_ridgeline.pdf")
     } else {
         fname = file.path(figure_dir(), glue::glue("ko_specific_effects_ridgeline_{tag}.pdf"))
+    }
+
+    ggsave(fname, plot, width = 6, height = 4, units = "in")
+
+    plot = ggplot(data = counts, aes(y = gene_group, x = value, fill = gene_group)) +
+            labs(fill = "", x = "Number of perturbation specific effects") +
+            # ggridges::stat_density_ridges(
+            #         geom = "density_ridges_gradient", 
+            #         calc_ecdf = TRUE,
+            #         quantiles = 1, quantile_lines = FALSE
+            # ) +
+            ggridges::geom_density_ridges(
+                jittered_points = TRUE,
+                position = position_points_jitter(width = 0.10, height = 0.00),
+                point_shape = '|',
+                point_size = 4,
+                point_alpha = 1
+            ) +
+            cowplot::theme_cowplot(font_size = 12) +
+            add_gene_group_fill_ggplot2() +
+            theme(
+                legend.position = "top",
+                axis.title.y = element_blank()
+            )
+            # guides(fill = "none")
+
+    if(is.null(tag)) {
+        fname = file.path(figure_dir(), "ko_specific_effects_ridgeline2.pdf")
+    } else {
+        fname = file.path(figure_dir(), glue::glue("ko_specific_effects_ridgeline2_{tag}.pdf"))
     }
 
     ggsave(fname, plot, width = 6, height = 4, units = "in")
