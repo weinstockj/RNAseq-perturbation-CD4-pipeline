@@ -958,7 +958,7 @@ create_module_pathway_graph = function(causal_network, mashr, cluster_membership
     return(graph)
 }
 
-compute_modules_with_downstream = function(mashr, cluster_membership, lfsr_threshold = set_lfsr_threshold()) {
+compute_modules_with_downstream = function(mashr, cluster_membership, expression, lfsr_threshold = set_lfsr_threshold()) {
 
     cluster_labels = unique(cluster_membership$cluster)
 
@@ -991,6 +991,7 @@ compute_modules_with_downstream = function(mashr, cluster_membership, lfsr_thres
             upstream = cluster_genes[[.x]]
             downstream = downstream_edges %>%
                 dplyr::filter(from_cluster == .env[[".x"]]) %>%
+                # dplyr::filter(signed_weight > 0) %>% # only positively regulated downstream genes
                 dplyr::pull(to) %>%
                 unique
 
@@ -998,5 +999,349 @@ compute_modules_with_downstream = function(mashr, cluster_membership, lfsr_thres
         }) %>%
         purrr::set_names(cluster_labels)
 
-    return(cluster_genes)
+    cluster_genes_positive = purrr::map(cluster_labels, ~{
+            upstream = cluster_genes[[.x]]
+            downstream = downstream_edges %>%
+                dplyr::filter(from_cluster == .env[[".x"]]) %>%
+                dplyr::filter(signed_weight > 0) %>% # only positively regulated downstream genes
+                dplyr::pull(to) %>%
+                unique
+
+            return(c(upstream, downstream))
+        }) %>%
+        purrr::set_names(cluster_labels)
+
+    all_cluster_genes = unique(unlist(cluster_genes))
+
+    non_cluster_genes = setdiff(expression$gene_name, all_cluster_genes)
+
+    cluster_genes$'0' = non_cluster_genes
+    cluster_genes_positive$'0' = non_cluster_genes
+
+    return(
+        list(
+            "all_genes" = cluster_genes,
+            "only_positively_regulated" = cluster_genes_positive
+        )
+    )
+}
+
+create_module_th17_manual_graph = function(causal_network, mashr, cluster_membership, meta, threshold = set_causal_threshold(), lfsr_threshold = set_lfsr_threshold()) {
+
+    select_modules = c(
+                        "4A"
+    )
+
+    pathway_gene_names = c(
+            "IL17A",
+            "IL17F",
+            "IL23R",
+            "IL21",
+            "IL22"
+    )
+
+    cluster_genes = cluster_membership %>%
+        dplyr::filter(cluster == .env[["select_modules"]]) %>%
+        dplyr::pull(gene_name)
+
+    cluster_genes = c(cluster_genes, "STAT3", "RORC")
+
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        dplyr::filter(col %in% cluster_genes & row %in% cluster_genes) %>%
+        dplyr::rename(from = row, to = col, signed_weight = estimate)
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "signed_weight", -to) %>%
+        dplyr::mutate(weight = abs(signed_weight))
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm) %>%
+        dplyr::inner_join(
+            meta %>% dplyr::distinct(KO, gene_group), 
+            by = c("from" = "KO")
+        )
+
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::filter(to %in% .env[["pathway_gene_names"]]) %>%
+        dplyr::filter(from %in% cluster_genes) %>%
+        dplyr::select(from, to, signed_weight, weight)
+
+    print(downstream_edges %>% dplyr::distinct(to))
+
+
+    edges = edges %>%
+        dplyr::bind_rows(downstream_edges)
+    
+    print(edges)
+
+    status = tibble::tibble(
+                name = unique(c(edges$from, edges$to))
+            )
+
+    graph = tidygraph::tbl_graph(
+        status,
+        edges
+    )
+
+    level_0 = 16
+    level_1 = 8
+    level_2 = 0
+    level_3 = -4
+    level_4 = -2
+    manual_layout = tibble::tribble(
+        ~name, ~x, ~y,
+        "IRF4", -5, level_1,
+        "JAK3", 5, level_1,
+        "KMT2A", 0, level_0,
+        "STAT5A", 2, level_1,
+        "STAT5B", -2, level_1,
+        "IL2RA", 10, level_1,
+        "STAT3", -7, level_1,
+        "RORC", -9, level_1,
+        "IL17A", -5, level_2,
+        "IL17F", -2, level_2,
+        "IL21", 0, level_2,
+        "IL22", 2, level_2,
+        "IL23", 4, level_2,
+        "IL23R", 6, level_2
+    )
+
+    manual_layout %>%
+        dplyr::add_count(x, y) %>%
+        dplyr::arrange(desc(n)) %>%
+        dplyr::filter(n > 1) %>%
+        as.data.frame %>%
+        print
+
+    graph = graph %>%
+        tidygraph::activate(nodes) %>%
+        tidygraph::inner_join(manual_layout, by = "name")
+
+    # plot = ggraph(graph, "tree") + 
+    plot = ggraph(graph, x = x, y = y) + 
+                geom_edge_arc2(
+                # geom_edge_link(
+                        aes(colour = signed_weight),
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        alpha = .4,
+                        strength = 0.1,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) +
+                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                geom_node_point() +
+                geom_node_text(
+                    # aes(label = name, color = is_gwas),
+                    aes(label = name),
+                    size = 3.0,
+                    # colour = "black", 
+                    # family = "serif",
+                    check_overlap = TRUE,
+                    repel = TRUE
+                ) + 
+                theme_graph(base_family = "Helvetica") +
+                theme(legend.position = "top", legend.key.width = unit(1, "cm"))
+
+    fname = file.path(figure_dir(), glue::glue("cluster_4_network_th17_manual_layout.pdf"))
+    ggsave(
+        fname,
+        plot,
+        width = 6,
+        height = 8,
+        units = "in"
+    )
+
+    return(graph)
+}
+
+create_module_cell_cycle_manual_graph = function(causal_network, mashr, cluster_membership, meta, threshold = set_causal_threshold(), lfsr_threshold = set_lfsr_threshold()) {
+
+    select_modules = c(
+                        "2A"
+    )
+
+    pathway_gene_names = c(
+            "CREBBP",
+            "SMAD2",
+            "SMAD3",
+            "SMAD4",
+            "CDKN1",
+            "CDKN2",
+            "CDKN4",
+            "CDKN6",
+            "CDKN7",
+            "CDKN1A",
+            "CDKN1B",
+            "CDKN2A",
+            "CDKN2B",
+            "CDKN2C",
+            "CDKN2D",
+            "EP300",
+            "CREBBP",
+            "RB1",
+            "MYC"
+    )
+
+    cluster_genes = cluster_membership %>%
+        dplyr::filter(cluster == .env[["select_modules"]]) %>%
+        dplyr::pull(gene_name)
+
+    cluster_genes = c(cluster_genes)
+
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        dplyr::filter(col %in% cluster_genes & row %in% cluster_genes) %>%
+        dplyr::rename(from = row, to = col, signed_weight = estimate)
+
+    print("edges")
+    print(edges)
+    # browser()
+
+    pm = ashr::get_pm(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "signed_weight", -to) %>%
+        dplyr::mutate(weight = abs(signed_weight))
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to) %>%
+        dplyr::inner_join(pm)
+
+    print("Here")
+    print(lfsr %>% dplyr::filter(from == "ZNF708" & to == "SMAD3"))
+
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::filter(to %in% .env[["pathway_gene_names"]]) %>%
+        dplyr::filter(from %in% cluster_genes) %>%
+        dplyr::select(from, to, signed_weight, weight)
+
+    print("downstream nodes")
+    print(downstream_edges %>% dplyr::distinct(to))
+
+    print("downstream nodes of ZNF708")
+    print(downstream_edges %>% dplyr::filter(from == "ZNF708"))
+
+    edges = edges %>%
+        dplyr::bind_rows(downstream_edges)
+    
+    print("all nodes")
+    print(edges)
+
+    status = tibble::tibble(
+                name = unique(c(edges$from, edges$to))
+            )
+
+    graph = tidygraph::tbl_graph(
+        status,
+        edges
+    )
+
+    level_0 = 16
+    level_1 = 8
+    level_2 = 0
+    level_3 = -4
+    level_4 = -2
+    manual_layout = tibble::tribble(
+        ~name, ~x, ~y,
+        "IRF1", -5, level_1,
+        "IRF7", 5, level_1,
+        "RORC", 0, level_1,
+        "ZNF708", 2, level_1,
+        "TET2", -2, level_1,
+        "FOXP3", 10, level_1,
+        "EGR3", -7, level_1,
+        "ZNF331", -9, level_1,
+        "ZFP3", -5, level_1,
+        "TP53", -2, level_1,
+        "MDM2", 0, level_1,
+        "CREBBP", -2, level_2,
+        "SMAD2", -4, level_2,
+        "SMAD3", -5, level_2,
+        "SMAD4",1, level_2,
+        "CDKN1", 3, level_2,
+        "CDKN2", 4, level_2,
+        "CDKN4", 5, level_2,
+        "CDKN6", 7, level_2,
+        "CDKN7", 8, level_2,
+        "CDKN1A", 9, level_2,
+        "CDKN1B", 11, level_2,
+        "CDKN2A", 13, level_2,
+        "CDKN2B", 15, level_2,
+        "CDKN2C", 17, level_2,
+        "CDKN2D", 18, level_2,
+        "EP300",  19, level_2,
+        "CREBBP", 20, level_2,
+        "RB1", 22, level_2,
+        "MYC", 23, level_2
+    )
+
+    manual_layout %>%
+        dplyr::add_count(x, y) %>%
+        dplyr::arrange(desc(n)) %>%
+        dplyr::filter(n > 1) %>%
+        as.data.frame %>%
+        print
+
+    # graph = graph %>%
+    #     tidygraph::activate(nodes) %>%
+    #     tidygraph::inner_join(manual_layout, by = "name")
+
+    plot = ggraph(graph, "sugiyama") + 
+    # plot = ggraph(graph, x = x, y = y) + 
+                # geom_edge_arc2(
+                geom_edge_diagonal(
+                # geom_edge_link(
+                        aes(colour = signed_weight),
+                        arrow = arrow(
+                                angle = 15,
+                                length = unit(0.13, "inches"),
+                                # ends = "last",
+                                type = "closed"
+                        ),
+                        alpha = .4,
+                        strength = 0.8,
+                        start_cap = circle(2.6, 'mm'),
+                        end_cap = circle(2.6, 'mm')
+                ) +
+                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                geom_node_point() +
+                geom_node_text(
+                    # aes(label = name, color = is_gwas),
+                    aes(label = name),
+                    size = 3.0,
+                    # colour = "black", 
+                    # family = "serif",
+                    check_overlap = FALSE,
+                    repel = TRUE
+                ) + 
+                coord_flip() +
+                scale_y_reverse() +
+                theme_graph(base_family = "Helvetica") +
+                theme(legend.position = "top", legend.key.width = unit(1, "cm"))
+
+    fname = file.path(figure_dir(), glue::glue("cluster_2A_network_cell_cycle_manual_layout.pdf"))
+    ggsave(
+        fname,
+        plot,
+        width = 6,
+        height = 6,
+        units = "in"
+    )
+
+    return(graph)
 }
