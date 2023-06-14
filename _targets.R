@@ -49,6 +49,8 @@ source("R/ABC_enrichment.R")
 source("R/pathway_plot.R")
 source("R/annotate_GWAS_loci.R")
 source("R/compare_to_yazar.R")
+source("R/perez_analysis.R")
+source("R/SLE_gene_signatures.R")
 
 # Replace the target list below with your own:
 list(
@@ -762,6 +764,14 @@ list(
         command = create_module_pathway_graph(causal_network, joint_downstream_model, heatmap_cluster_annotations, "04630", meta)
     ),
     tar_target(
+        name = cluster_4_Th17_subnetwork_,
+        command = create_module_th17_manual_graph(causal_network, joint_downstream_model, heatmap_cluster_annotations, meta)
+    ),
+    tar_target(
+        name = cluster_2A_cell_cycle_subnetwork_,
+        command = create_module_cell_cycle_manual_graph(causal_network, joint_downstream_model, heatmap_cluster_annotations, meta, lfsr_threshold = 0.05)
+    ),
+    tar_target(
         name = effector_genes,
         command = read_effectorness_genes()
     ),
@@ -779,11 +789,112 @@ list(
     # ),
     tar_target(
         name = module_genes,
-        command = compute_modules_with_downstream(joint_downstream_model, heatmap_cluster_annotations)
+        command = compute_modules_with_downstream(
+                    joint_downstream_model,
+                    heatmap_cluster_annotations,
+                    expression
+        )
+    ),
+    tar_target(
+        name = lupus_cells,
+        command =  read_lupus_cells()
+    ),
+    # tar_target(
+    #     name = regress_signatures_lupus,
+    #     command = regress_module_signatures(
+    #         lupus_cells,
+    #         module_genes,
+    #         covars = lupus_covars(),
+    #         main_effect = "disease"
+    #     )
+    # ),
+    # tar_target(
+    #     name = regress_signatures_lupus_state,
+    #     command = regress_module_signatures(
+    #         lupus_cells,
+    #         module_genes,
+    #         covars = lupus_state_covars(),
+    #         main_effect = "disease_state"
+    #     )
+    # ),
+    # tar_target(
+    #     name = regress_signatures_cell_cycle,
+    #     command = regress_module_signatures(
+    #         lupus_cells,
+    #         module_genes,
+    #         covars = cell_cycle_covars(),
+    #         main_effect = "G2M_score"
+    #     )
+    # ),
+    # tar_target(
+    #     name = plot_lupus_signatures,
+    #     command = plot_module_signatures(regress_signatures_lupus, tag = "SLE")
+    # ),
+    # tar_target(
+    #     name = plot_cell_cycle_signatures,
+    #     command = plot_module_signatures(regress_signatures_cell_cycle, tag = "G2M_score")
+    # ),
+    # tar_target(
+    #     name = plot_lupus_state_signatures,
+    #     command = plot_module_disease_state(regress_signatures_lupus_state, tag = "disease_state")
+    # ),
+    tar_target(
+        name = nakano_SLE_activity_signatures,
+        command = disease_activity_signatures_nakano()
+    ),
+    tar_target(
+        name = nakano_SLE_state_signatures,
+        command = disease_state_signatures_nakano()
+    ),
+    tar_target(
+        name = nakano_SLE_activity_enrichments,
+        command = compute_enrichments_nakano(
+            nakano_SLE_activity_signatures,
+            module_genes$only_positively_regulated,
+            expression$gene_name
+        )
+    ),
+    tar_target(
+        name = nakano_SLE_state_enrichments,
+        command = compute_enrichments_nakano(
+            nakano_SLE_state_signatures,
+            module_genes$only_positively_regulated,
+            expression$gene_name
+        )
+    ),
+    tar_target(
+        name = forest_plot_nakano_disease_activity,
+        command = plot_module_nakano(
+            nakano_SLE_activity_enrichments
+        )
+    ),
+    tar_target(
+        name = forest_plot_nakano_disease_state,
+        command = plot_module_nakano(
+            nakano_SLE_state_enrichments,
+            tag = "SLE_state"
+        )
+    ),
+    tar_target(
+        name = forest_plot_nakano_combined,
+        command = plot_module_nakano_combined(
+            nakano_SLE_state_enrichments,
+            nakano_SLE_activity_enrichments
+        )
     ),
     tar_target(
         name = write_out_experiment_,
-        command = write_out_experiment(meta, diffeq_with_pcs, pca, mashr, results_with_pcs, results_no_pcs, module_genes, txdb),
+        command = write_out_experiment(
+                    meta,
+                    diffeq_with_pcs,
+                    pca,
+                    mashr,
+                    joint_downstream_model,
+                    results_with_pcs,
+                    results_no_pcs,
+                    module_genes,
+                    txdb
+                ),
         format = "file"
     )
 )
