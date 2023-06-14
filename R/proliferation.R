@@ -272,19 +272,46 @@ compute_effector_score = function(mashr, effector_genes, cytokine_hits, cluster_
             labs(x = "Aggregate regulation of genes that\npromote an effector phenotype", fill = "Gene module") +
             theme(
                 axis.title.y = element_blank()
-            ) 
+            ) +
+            scale_fill_manual(
+                values = c(
+                    "1A" = "#8dd3c7",
+                    "1B" = "#ffffb3",
+                    "1C" = "#bebada",
+                    "2A" = "#fb8072",
+                    "2B" = "#80b1d3",
+                    "2C" = "#fdb462",
+                    "3A" = "#b3de69",
+                    "3B" = "#fccde5",
+                    "4A" = "#d9d9d9"
+                )
+            )
 
     plot_cluster = effector_summary_by_cluster %>% 
         dplyr::mutate(
             from_cluster = forcats::fct_reorder(from_cluster, effector_summary)
         ) %>%
-        ggplot(data = ., aes(y = from_cluster, x = effector_summary, fill = factor(from_main_cluster))) +
+        ggplot(data = ., aes(y = from_cluster, x = effector_summary, fill = from_cluster)) +
             geom_col() +
             cowplot::theme_cowplot(font_size = 12) +
-            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype", fill = "Gene module") +
+            labs(x = "Aggregate regulation of genes that\npromote an effector phenotype") +
             theme(
                 axis.title.y = element_blank()
-            )
+            ) +
+            scale_fill_manual(
+                values = c(
+                    "1A" = "#8dd3c7",
+                    "1B" = "#ffffb3",
+                    "1C" = "#bebada",
+                    "2A" = "#fb8072",
+                    "2B" = "#80b1d3",
+                    "2C" = "#fdb462",
+                    "3A" = "#b3de69",
+                    "3B" = "#fccde5",
+                    "4A" = "#d9d9d9"
+                )
+            ) +
+            guides(fill = "none")
         
     ggsave(
         file.path(figure_dir(), "effectorness_gradient.pdf"),
@@ -298,7 +325,7 @@ compute_effector_score = function(mashr, effector_genes, cytokine_hits, cluster_
         file.path(figure_dir(), "effectorness_gradient_by_cluster.pdf"),
         plot_cluster,
         width = 5,
-        height = 4,
+        height = 5,
         units = "in"
     )
 
