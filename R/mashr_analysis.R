@@ -142,7 +142,7 @@ plot_pairwise_effects = function(pairwise, meta, tag = "diffeq") {
 }
 
 set_causal_threshold = function() {
-    .020
+    .025
 }
 
 set_lfsr_threshold = function() {
@@ -324,7 +324,6 @@ extract_ko_specific_effects = function(mashr, txdb, lfsr_threshold = set_lfsr_th
         m = mashr
         rownames = mashr$readout_gene
     }
-    
 
     # rows where a gene is "significant" at lfsr < .05 for at least one KO
     significant = mashr::get_significant_results(m, thresh = lfsr_threshold) 
@@ -343,20 +342,114 @@ extract_ko_specific_effects = function(mashr, txdb, lfsr_threshold = set_lfsr_th
     cols = colnames(pm_norm)
 
     if(is_object_mashr(mashr)) {
-        tissue_specific = purrr::set_names(cols) %>%
+        ko_results = purrr::set_names(cols) %>%
             purrr::imap(~{
                 rownames[specific_pm_norm[, .y] > 0.5]
             })
 
     } else {
-
-        tissue_specific = purrr::set_names(cols) %>%
+        ko_results = purrr::set_names(cols) %>%
             purrr::imap(~{
                 mashr$readout_gene[m$result$lfsr[, .y] < lfsr_threshold]
             })
 
     }
-    return(tissue_specific)
+    return(ko_results)
+}
+
+plot_top_downstream_indegree = function(mashr, expression, meta, lfsr_threshold = set_lfsr_threshold()) {
+
+    if(is_object_mashr(mashr)) {
+        m = mashr[["mashr"]]
+        rownames = tibble::tibble(
+            gene_id = mashr[["gene_id"]]
+        ) %>%
+            dplyr::inner_join(txdb) %>%
+            dplyr::pull(gene_name)
+    } else {
+        m = mashr
+        rownames = mashr$readout_gene
+    }
+
+    # IL2RA = meta %>%
+    #     dplyr::filter(gene_group == "IL2RA Regulators") %>%
+    #     dplyr::pull(KO) %>%
+    #     as.character
+
+
+    lfsr = ashr::get_lfsr(mashr) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr$readout_gene) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to)
+
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        # dplyr::filter(from %in% .env[["IL2RA"]]) %>%
+        dplyr::select(from, to)
+
+    counts = downstream_edges %>%
+        dplyr::count(to) %>%
+        dplyr::right_join(expression, by = c("to" = "gene_name")) %>%
+        dplyr::mutate(n = dplyr::coalesce(n, 0)) %>%
+        dplyr::arrange(desc(n))
+
+    top_counts = counts %>%
+        dplyr::slice(1:10)
+    
+    bar_plot = ggplot(data = top_counts, aes(x = forcats::fct_reorder(to, n, .desc = FALSE), y = n)) +
+            geom_col(fill = "#c23121") +
+            labs(y = "Number of incoming connections") +
+            scale_y_continuous(expand = expand_scale(mult = c(0.0, 0.0))) +
+            cowplot::theme_cowplot(font_size = 12) +
+            add_gene_group_fill_ggplot2() +
+            theme(
+                legend.position = "top",
+                axis.title.x = element_blank(),
+                axis.title.y = element_blank(),
+                axis.text.x = element_text(angle=45, vjust=1, hjust=1)
+            ) 
+            # guides(fill = "none")
+
+    fname = file.path(figure_dir(), "top_10_incoming_connection_dist.pdf")
+    ggsave(fname, bar_plot, width = 7, height = 5, units = "in")
+
+    density_plot = ggplot(data = counts, aes(x = n)) +
+            labs(fill = "", x = "Number of incoming connections", y = "Number of genes") +
+            # ggridges::stat_density_ridges(
+            #         geom = "density_ridges_gradient", 
+            #         calc_ecdf = TRUE,
+            #         quantiles = 1, quantile_lines = FALSE
+            # ) +
+            scale_y_continuous(expand = expand_scale(mult = c(0.0, 0.0)), labels = scales::comma) +
+            scale_x_continuous(expand = expand_scale(mult = c(0.0, 0.0)), breaks = scales::pretty_breaks(n = 8)) +
+            geom_histogram(fill = "gray37", aes(y = ..count..), binwidth = 1) +
+            # ggridges::geom_density_ridges(
+            #     jittered_points = TRUE,
+            #     position = position_points_jitter(width = 0.10, height = 0.00),
+            #     point_shape = '|',
+            #     point_size = 4,
+            #     point_alpha = 1
+            # ) +
+            cowplot::theme_cowplot(font_size = 10) +
+            theme(
+                legend.position = "top"
+                # axis.title.y = element_blank()
+                # axis.ticks.y = element_blank(),
+                # axis.text.y = element_blank()
+            ) +
+            annotate(geom = "segment", x = 29, y = 0, xend = 29, yend = 100) +
+            annotate(geom = "segment", x = 28, y = 0, xend = 28, yend = 100) +
+            annotate(geom = "segment", x = 27, y = 0, xend = 27, yend = 100) +
+            annotate(geom = "segment", x = 26, y = 0, xend = 26, yend = 100) 
+
+    plot_with_inset = cowplot::ggdraw() +
+        cowplot::draw_plot(density_plot)
+        # cowplot::draw_plot(bar_plot, x= .4, y = .4, width = .5, height = .5)
+
+    fname = file.path(figure_dir(), "incoming_connection_ridgeline.pdf")
+    ggsave(fname, plot_with_inset, width = 5, height = 4, units = "in")
+
+    return(counts)
 }
 
 plot_ko_specific_effects = function(ko_specific_effects, meta, tag = NULL) {
@@ -433,7 +526,7 @@ plot_ko_specific_effects = function(ko_specific_effects, meta, tag = NULL) {
                 point_alpha = 1
             ) +
             cowplot::theme_cowplot(font_size = 12) +
-            add_gene_group_fill_ggplot2() +
+            add_gene_group_fill_ggplot2(.8) +
             theme(
                 legend.position = "top",
                 axis.title.y = element_blank()
