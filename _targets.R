@@ -161,6 +161,15 @@ list(
         command = read_direct_effects(direct_effects_location())
     ),
     tar_target(
+        name = permuted_networks,
+        command = permute_graph_and_tabulate_clustering(causal_network, meta, set_causal_threshold()),
+        packages = c(
+            "dplyr",
+            "tidygraph",
+            "magrittr"
+        )
+    ),
+    tar_target(
         name = write_out_total_covar,
         command = compute_covariance_reorder(causal_network, txdb)
     ),
@@ -269,6 +278,10 @@ list(
     tar_target(
         name = ko_specific_effects_joint_downstream,
         command = extract_ko_specific_effects(joint_downstream_model, txdb)
+    ),
+    tar_target(
+        name = plot_top_downstream_indegree_,
+        command = plot_top_downstream_indegree(joint_downstream_model, expression, meta)
     ),
     tar_target(
         name = downstream_indegree,
