@@ -1,9 +1,13 @@
-group_colors_ = function() {
+group_colors_ = function(alpha = 1.0) {
     colors = c(
         "Control" = "#d95f02",
         "IEI Target" = "#1b9e77",
         "IL2RA Regulators" = "#7570b3"
     )
+
+    if(alpha < 1.0) {
+        colors = colorspace::adjust_transparency(colors, alpha = alpha)
+    }
 
     return(colors)
 }
@@ -39,9 +43,9 @@ add_gene_group_colors_extra = function(meta) {
         ) 
 }
 
-add_gene_group_color_ggplot2 = function() {
+add_gene_group_color_ggplot2 = function(alpha = 1.0) {
     
-    colors = group_colors_()
+    colors = group_colors_(alpha = alpha)
 
     return(scale_color_manual(values = colors))
 }
@@ -53,9 +57,9 @@ add_gene_group_color_extra_ggplot2 = function() {
     return(scale_color_manual(values = colors))
 }
 
-add_gene_group_fill_ggplot2 = function() {
+add_gene_group_fill_ggplot2 = function(alpha = 1.0) {
     
-    colors = group_colors_()
+    colors = group_colors_(alpha = alpha)
 
     return(scale_fill_manual(values = colors))
 }
@@ -1344,4 +1348,88 @@ create_module_cell_cycle_manual_graph = function(causal_network, mashr, cluster_
     )
 
     return(graph)
+}
+
+tabulate_group_clustering = function(graph) {
+
+    edges = graph %>%
+        tidygraph::activate(edges) %>%
+        tidygraph::mutate(
+            from_group = tidygraph::.N()$gene_group[from],
+            to_group = tidygraph::.N()$gene_group[to]
+        ) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::distinct(.)
+
+    counts = edges %>%
+        dplyr::count(from_group, to_group) %>%
+        tidyr::complete(
+            from_group,
+            to_group,
+            fill = list(n = 0)
+        )
+
+    return(counts)
+}
+
+permute_graph_and_tabulate_clustering = function(causal_network, meta, threshold = set_causal_threshold()) {
+
+    set.seed(1)
+
+    edges = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold)
+
+    graph = edges %>%
+        create_tidy_graph(meta)
+
+    logger::log_info("Now permuting graph")
+
+    shuffled_graphs = purrr::map_dfr(
+        1:2000,
+        function(x) {
+            shuffled = igraph::rewire(graph, with = igraph::keeping_degseq(niter = 2000)) %>%
+                tidygraph::as_tbl_graph(.)
+
+            tabulate_group_clustering(shuffled)
+        },
+        .id = "id"
+    )
+
+    logger::log_info("Done permuting graph")
+
+    return(shuffled_graphs)
+}
+
+compare_network_to_permutations = function(causal_network, permutations, meta, threshold = set_causal_threshold()) {
+
+    graph = causal_network %>%
+        dplyr::filter(abs(estimate) > threshold) %>%
+        create_tidy_graph(meta)
+
+    observed_tabulated = tabulate_group_clustering(graph)
+
+    observed_sharing = observed_tabulated %>%
+        dplyr::filter(from_group == to_group) %>%
+        dplyr::pull(n) %>%
+        sum
+
+    sharing = permutations %>%
+        dplyr::group_by(id) %>%
+        dplyr::filter(from_group == to_group) %>%
+        dplyr::summarize(n = sum(n)) %>%
+        dplyr::pull(n)
+
+    alpha = 0.05
+    lower = quantile(sharing, probs = alpha / 2)
+    upper = quantile(sharing, probs = 1 - alpha / 2)
+
+    logger::log_info(
+        glue::glue("Observing sharing = {observed_sharing}, null = ({lower}, {upper})")
+    )
+
+    logger::log_info(
+        glue::glue("Observing sharing = {observed_sharing}, greater than {mean(sharing < observed_sharing)}, less than {mean(sharing > observed_sharing)}")
+    )
+
+    return(sharing)
 }
