@@ -234,7 +234,7 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
 
     plot = plot + 
             # geom_node_point(aes(colour = gene_group)) +
-            scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red")  
+            scale_edge_colour_gradient2(low = "deepskyblue2", mid = "gray", high = "red")  
             # geom_node_point(aes(size = 2.5 + 0.08 * log1p(degree), color = I(color)), alpha = .7) +
 
     if(scale_node_size_by_degree) {
@@ -1422,6 +1422,28 @@ compare_network_to_permutations = function(causal_network, permutations, meta, t
     alpha = 0.05
     lower = quantile(sharing, probs = alpha / 2)
     upper = quantile(sharing, probs = 1 - alpha / 2)
+
+    plot = ggplot(data = tibble(n = sharing), aes(x = n, y  = ..count..)) +
+                geom_histogram(bins = 15) +
+                geom_vline(xintercept = observed_sharing, color = "red") +
+                geom_vline(xintercept = lower, color = "black", linetype = "dashed") +
+                geom_vline(xintercept = upper, color = "black", linetype = "dashed") +
+                scale_y_continuous(expand = expansion(mult = c(0, .1))) +
+                cowplot::theme_cowplot(font_size = 12) +
+                labs(x = "Number of within-group edges")
+
+    fname = file.path(figure_dir(), "permutation_clustering_histogram.pdf")
+
+    ggsave(
+           fname,
+           plot,
+           width = 6,
+           height = 4 
+    )
+
+    logger::log_info(
+        glue::glue("Now saving to {fname}")
+    )
 
     logger::log_info(
         glue::glue("Observing sharing = {observed_sharing}, null = ({lower}, {upper})")
