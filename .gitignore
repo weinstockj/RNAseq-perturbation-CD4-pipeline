@@ -19,3 +19,4 @@ bin/
 envs/
 _targets/
 output/
+*~
