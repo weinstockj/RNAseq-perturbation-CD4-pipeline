@@ -46,6 +46,7 @@ source("R/proliferation.R")
 source("R/joint_downstream_model.R")
 source("R/validate_network.R")
 source("R/ABC_enrichment.R")
+source("R/CHiP_enrichment.R")
 source("R/pathway_plot.R")
 source("R/annotate_GWAS_loci.R")
 source("R/compare_to_yazar.R")
@@ -170,6 +171,16 @@ list(
         )
     ),
     tar_target(
+        name = plot_permuted_networks,
+        command = compare_network_to_permutations(causal_network, permuted_networks, meta),
+        packages = c(
+            "dplyr",
+            "ggplot2",
+            "magrittr"
+        )
+
+    ),
+    tar_target(
         name = write_out_total_covar,
         command = compute_covariance_reorder(causal_network, txdb)
     ),
@@ -203,7 +214,7 @@ list(
         format = "file"
     ),
     tar_target(
-        name = plot_causal_network_sub_network_,
+        name = plot_causal_network_sub_network_stat1_,
         command = plot_network(
             causal_network %>% dplyr::filter(row == "STAT1" | col == "STAT1"), 
             meta, 
@@ -211,6 +222,22 @@ list(
             tag = "STAT1",
             edges = "curved",
             layout = "auto",
+            scale_node_size_by_degree = FALSE,
+            width = 7,
+            height = 5,
+            label_size = 4
+        ),
+        format = "file"
+    ),
+    tar_target(
+        name = plot_causal_network_sub_network_med12_,
+        command = plot_network(
+            causal_network %>% dplyr::filter(row == "MED12" | col == "MED12"), 
+            meta, 
+            threshold = 0.025,
+            tag = "MED12",
+            edges = "straight",
+            layout = "stress",
             scale_node_size_by_degree = FALSE,
             width = 7,
             height = 5,
@@ -238,6 +265,10 @@ list(
     tar_target(
         name = compare_total_effects_,
         command = compare_total_effects(total_effects, results_with_pcs, txdb)
+    ),
+    tar_target(
+        name = compare_diffeq_to_causal_,
+        command = compare_direct_diffeq_effects(causal_network, results_with_pcs, txdb, expression)
     ),
     tar_target(
         name = plot_direct_indirect_,
@@ -688,12 +719,24 @@ list(
         command = read_DAC()
     ),
     tar_target(
+        name = ChIP,
+        command = read_ChIP()
+    ),
+    tar_target(
+        name = ChIP_ABC_GRN,
+        command = merge_ABC_ChIP_GRN(ABC_GRN, ChIP)
+    ),
+    tar_target(
         name = DAC_ABC_GRN,
         command = merge_DAC_ABC_GRN(ABC_GRN, DAC)
     ),
     tar_target(
         name = determine_enrichment_DAC_ABC_GRN,
         command = iterate_ABC_GRN_thresholding(meta, DAC_ABC_GRN, causal_network)
+    ),
+    tar_target(
+        name = determine_enrichment_ChIP_ABC_GRN,
+        command = iterate_ChIP_thresholding(meta, ChIP_ABC_GRN, causal_network)
     ),
     tar_target(
         name = matrix_factorization,
