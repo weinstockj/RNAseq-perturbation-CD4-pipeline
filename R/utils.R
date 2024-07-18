@@ -40,7 +40,7 @@ plot_network = function(parsed_chain, output_dir = figure_output_dir()) {
                     repel = TRUE
                 ) + 
                 labs(colour = "weight") +
-                scale_edge_colour_gradient2(low = "blue", mid = "gray", high = "red") + 
+                scale_edge_colour_gradient2(low = "deepskyblue2", mid = "gray", high = "red") + 
                 theme_graph(base_family = "Helvetica")
 
     ggsave(
