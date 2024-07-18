@@ -186,6 +186,24 @@ plot_pca = function(pca, meta) {
 
     ggsave(file.path(figure_dir(), "PC3_PC4_intervention.pdf"), plot, width = 6, height = 4, units = "in")
 
+    plot = ggplot(data = scores, aes(x = PC1, y = PC2, color = experiment_version)) +
+            geom_point() + 
+            cowplot::theme_cowplot(font_size = 12)
+
+    ggsave(file.path(figure_dir(), "PC1_PC2_experiment_version.pdf"), plot, width = 6, height = 4, units = "in")
+
+    plot = ggplot(data = scores, aes(x = PC3, y = PC4, color = experiment_version)) +
+            geom_point() + 
+            cowplot::theme_cowplot(font_size = 12)
+
+    ggsave(file.path(figure_dir(), "PC3_PC4_experiment_version.pdf"), plot, width = 6, height = 4, units = "in")
+
+    plot = ggplot(data = scores, aes(x = PC5, y = PC6, color = experiment_version)) +
+            geom_point() + 
+            cowplot::theme_cowplot(font_size = 12)
+
+    ggsave(file.path(figure_dir(), "PC5_PC6_experiment_version.pdf"), plot, width = 6, height = 4, units = "in")
+
     plot = ggplot(data = scores, aes(x = PC5, y = PC6, color = KO)) +
             geom_point() + 
             cowplot::theme_cowplot(font_size = 12)
@@ -346,6 +364,54 @@ compare_total_effects = function(total_effects, results, txdb) {
     fname = file.path(figure_dir(), "compare_log2fcs_total_effect.pdf")
     ggsave(fname, plot, width = 8, height = 6, units = "in")
 }
+
+compare_direct_diffeq_effects = function(causal_network, results, txdb, expression, threshold = set_causal_threshold()) {
+
+    results = results %>%
+        dplyr::select(-baseMean) %>%
+        dplyr::inner_join(txdb, by = c("gene" = "gene_id")) %>%
+        dplyr::inner_join(
+            expression %>%
+                dplyr::select(KO = gene_name, KO_expression = expression),
+            by = c("KO")
+        ) %>%
+        dplyr::inner_join(
+            expression %>%
+                dplyr::select(gene_name, child_expression = expression),
+            by = c("gene_name")
+        )
+    
+    dfm = causal_network %>%
+        dplyr::filter(abs(estimate) > .env[["threshold"]]) %>%
+        dplyr::inner_join(results, by = c("row" = "KO", "col" = "gene_name")) %>%
+        dplyr::filter(padj < 5e-2) %>%
+        dplyr::mutate(
+              label = glue::glue("{row}%->%{col}"),
+              parsed_label = map_chr(label, ~as.character(as.expression(.x)))
+        )
+
+    print(summary(lm(log2FoldChange ~ estimate, data = dfm)))
+    print(summary(lm(log2FoldChange ~ estimate, data = dfm %>% dplyr::filter(KO_expression > 500))))
+    print(summary(lm(log2FoldChange ~ estimate, data = dfm %>% dplyr::filter(child_expression > 500))))
+
+    plot = ggplot(
+        data = dfm, 
+        aes(x = estimate, y = log2FoldChange, color = child_expression, label = label)) +
+        ggrepel::geom_text_repel(max.overlaps = 15, parse = TRUE) +
+        geom_point() +
+        scale_colour_viridis_c() + 
+        geom_smooth(method = "lm") +
+        labs(x = "Direct effect estimate", y = "DESeq2 log2FCs", colour = "baseline expression\nof downstream gene") +
+        cowplot::theme_cowplot(font_size = 12)
+
+    fname = file.path(figure_dir(), "compare_log2fcs_direct_effect.pdf")
+    ggsave(fname, plot, width = 8, height = 6, units = "in")
+
+    fname = file.path(figure_dir(), "compare_log2fcs_direct_effect.png")
+    ggsave(fname, plot, width = 8, height = 6, units = "in")
+}
+
+
 
 compare_dge = function(diffeq_with_pcs, diffeq_no_pcs, txdb) {
     

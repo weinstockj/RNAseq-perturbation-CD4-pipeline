@@ -452,6 +452,47 @@ plot_top_downstream_indegree = function(mashr, expression, meta, lfsr_threshold 
     return(counts)
 }
 
+parse_and_save_DEG_mashr = function(mashr, txdb, lfsr_threshold = set_lfsr_threshold()) {
+
+    stopifnot(is_object_mashr(mashr))
+
+    m = mashr[["mashr"]]
+
+    # flip sign so positive effects = positive regulation
+    m$result$PosteriorMean = m$result$PosteriorMean * -1
+
+    rownames = tibble::tibble(
+            gene_id = mashr[["gene_id"]]
+        ) %>%
+        dplyr::inner_join(txdb) %>%
+        dplyr::pull(gene_name)
+
+    pm = ashr::get_pm(m) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr[["gene_id"]]) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "pm", -to)
+
+    psd = ashr::get_psd(m) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr[["gene_id"]]) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "psd", -to)
+
+    lfsr = ashr::get_lfsr(m) %>%
+        tibble::as_tibble(.) %>%
+        dplyr::mutate(to = mashr[["gene_id"]]) %>%
+        tidyr::pivot_longer(names_to = "from", values_to = "lfsr", -to)
+
+    downstream_edges = lfsr %>%
+        dplyr::filter(lfsr < lfsr_threshold) %>%
+        dplyr::inner_join(pm, by = c("from", "to")) %>%
+        dplyr::inner_join(psd, by = c("from", "to")) %>%
+        dplyr::left_join(txdb, by = c("to" = "gene_id")) %>%
+        dplyr::rename(to_gene_symbol = gene_name) %>%
+        dplyr::select(from, to, to_gene_symbol, posterior_mean = pm, posterior_sd = psd, lfsr)
+
+    return(downstream_edges)
+}
+
 plot_ko_specific_effects = function(ko_specific_effects, meta, tag = NULL) {
 
     counts = purrr::map_dbl(ko_specific_effects, length) %>%
