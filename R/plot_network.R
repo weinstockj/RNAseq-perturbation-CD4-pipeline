@@ -167,7 +167,7 @@ create_total_tidy_graph = function(
     
 }
 
-plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), results = NULL, txdb = NULL, output_dir = figure_dir(), tag = "", edges = "straight", layout = "stress", scale_node_size_by_degree = TRUE, width = 13.5, height = 10, label_size = 6.3, ...) {
+plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), results = NULL, txdb = NULL, output_dir = figure_dir(), tag = "", edges = "straight", layout = "stress", scale_node_size_by_degree = TRUE, width = 13.5, height = 10, label_size = 6.3, label_nodes = TRUE, filter_IEI = FALSE, edge_width = 1.0, ...) {
 
 
     stopifnot(xor(is.null(threshold), is.null(results)))
@@ -193,6 +193,13 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
     ) %>%
         tidygraph::mutate(degree = tidygraph::centrality_degree())
 
+    if (filter_IEI) {
+        graph = graph %>%
+            tidygraph::activate(edges) %>%
+            tidygraph::mutate(IEI_edge = (tidygraph::.N()$gene_group[from] == "IEI Target") | (tidygraph::.N()$gene_group[to] == "IEI Target"), edge_alpha = ifelse(IEI_edge, .5, .2))
+
+    }
+
     # plot = ggraph(graph, "stress", bbox = 10) + 
     # plot = ggraph(graph, "auto", circular = TRUE) + 
     plot = ggraph(graph, layout, ...) 
@@ -200,19 +207,39 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
                 # geom_edge_arc2(
 
     if(edges == "straight") {
-        plot = plot + 
-                geom_edge_link(
-                    aes(colour = signed_weight),
-                        arrow = arrow(
-                                angle = 15,
-                                length = unit(0.13, "inches"),
-                                # ends = "last",
-                                type = "closed"
-                        ),
-                        alpha = .25,
-                        start_cap = circle(2.6, 'mm'),
-                        end_cap = circle(2.6, 'mm')
-                ) 
+
+        if(filter_IEI) {
+
+            plot = plot + 
+                    geom_edge_link(
+                        aes(colour = signed_weight, alpha = edge_alpha),
+                            arrow = arrow(
+                                    angle = 15,
+                                    length = unit(0.14, "inches"),
+                                    # ends = "last",
+                                    type = "closed"
+                            ),
+                            edge_width = edge_width,
+                            start_cap = circle(2.6, 'mm'),
+                            end_cap = circle(2.6, 'mm')
+                    ) 
+        } else {
+
+            plot = plot + 
+                    geom_edge_link(
+                        aes(colour = signed_weight),
+                            arrow = arrow(
+                                    angle = 15,
+                                    length = unit(0.13, "inches"),
+                                    # ends = "last",
+                                    type = "closed"
+                            ),
+                            edge_width = edge_width,
+                            alpha = .25,
+                            start_cap = circle(2.6, 'mm'),
+                            end_cap = circle(2.6, 'mm')
+                    ) 
+        }
 
     } else {
         plot = plot + 
@@ -224,6 +251,7 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
                                 # ends = "last",
                                 type = "closed"
                         ),
+                        edge_width = edge_width,
                         strength = .2,
                         alpha = .5,
                         start_cap = circle(2.6, 'mm'),
@@ -246,15 +274,34 @@ plot_network = function(parsed_chain, meta, threshold = set_causal_threshold(), 
             geom_node_point(aes(color = I(color)), alpha = .7) 
     }
 
+    if(label_nodes) {
+
+        if(filter_IEI) {
+
+            plot = plot +
+                    geom_node_text(
+                        # aes(filter = gene_group == "IEI Target", label = name, color = I(color), size = ifelse(gene_group == "IEI Target", label_size * 2.0, label_size)),
+                        aes(label = name, color = I(color), size = label_size),
+                        # colour = "black", 
+                        # family = "serif",
+                        check_overlap = TRUE,
+                        repel = TRUE
+                    )
+        } else {
+            plot = plot +
+                    geom_node_label(
+                        aes(label = name, color = I(color)),
+                        size = label_size,
+                        # colour = "black", 
+                        # family = "serif",
+                        check_overlap = TRUE,
+                        repel = TRUE
+                    )
+        }
+
+    }
+
     plot = plot + 
-            geom_node_label(
-                aes(label = name, color = I(color)),
-                size = label_size,
-                # colour = "black", 
-                # family = "serif",
-                check_overlap = TRUE,
-                repel = TRUE
-            ) + 
             labs(colour = "Control TF") +
             theme_graph(base_family = "Helvetica")
 

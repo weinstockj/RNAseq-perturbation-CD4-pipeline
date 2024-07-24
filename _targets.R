@@ -209,7 +209,46 @@ list(
             scale_node_size_by_degree = TRUE,
             width = 13.5,
             height = 10,
-            label_size = 6.3
+            label_size = 6.3,
+            label_nodes = TRUE
+        ),
+        format = "file"
+    ),
+    tar_target(
+        name = plot_causal_network_IEI_emphasize,
+        command = plot_network(
+            causal_network, 
+            meta, 
+            threshold = 0.025, 
+            tag = "causal_emphasize_IEI",
+            layout = "stress",
+            niter = 700, 
+            bbox = 20,
+            scale_node_size_by_degree = TRUE,
+            width = 13.5,
+            height = 10,
+            label_size = 12.0,
+            label_nodes = TRUE,
+            filter_IEI = TRUE,
+            edge_width = 1.5
+        ),
+        format = "file"
+    ),
+    tar_target(
+        name = plot_causal_network_no_label,
+        command = plot_network(
+            causal_network, 
+            meta, 
+            threshold = 0.025, 
+            tag = "causal_no_labels",
+            layout = "stress",
+            niter = 700, 
+            bbox = 20,
+            scale_node_size_by_degree = TRUE,
+            width = 13.5,
+            height = 10,
+            label_size = 6.3,
+            label_nodes = FALSE
         ),
         format = "file"
     ),
